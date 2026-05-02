@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: regatta-route-api
+    runtime: node
+    plan: starter
+    region: frankfurt
+    buildCommand: npm test
+    startCommand: npm run route-api
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22
