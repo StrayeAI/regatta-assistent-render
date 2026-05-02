@@ -5,7 +5,7 @@ let marks = [], active = 0, pos = null, weather = null, lastFetch = 0;
 let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simTimer = null, vectorOverlay = null;
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
-const APP_VERSION = '2026-05-02-pwa8';
+const APP_VERSION = '2026-05-02-pwa9';
 
 if (localStorage.regattaAppVersion !== APP_VERSION) {
   localStorage.regattaAppVersion = APP_VERSION;
@@ -55,7 +55,10 @@ const landPolygons = [
   [[59.1995,10.768],[59.2035,10.7725],[59.201,10.778],[59.1975,10.773]],
   // Kariholmen / små holmer i demo-området
   [[59.2050,10.7640],[59.2125,10.7680],[59.2150,10.7795],[59.2090,10.7860],[59.2020,10.7805],[59.2010,10.7700]],
-  [[59.2130,10.7900],[59.2175,10.7950],[59.2150,10.8025],[59.2095,10.7990]]
+  [[59.2130,10.7900],[59.2175,10.7950],[59.2150,10.8025],[59.2095,10.7990]],
+  // Presis sperre for Håbogen/Karibukta-landtungen der demoen traff land.
+  // Liten nok til å ikke lage store omveier/looper.
+  [[59.1975,10.7310],[59.2145,10.7310],[59.2185,10.7440],[59.2160,10.7570],[59.2105,10.7635],[59.2040,10.7605],[59.1980,10.7520]]
 ];
 
 function isLand(lat,lon){
@@ -315,8 +318,15 @@ function advanceBoatOnCourse(dtSec){
       if(active < marks.length-1) active++;
       save(); return;
     }
-    const p=safeStepToward(pos,target,Math.min(step,dTarget));
+    // Dersom vi har land direkte mot målet, bruk første trygge punkt fra vannrute som lokal delmål.
+    let localTarget=target;
+    if(crossesLand([pos.lat,pos.lon],[target.lat,target.lon])){
+      const wr=waterRoute([pos.lat,pos.lon],[target.lat,target.lon]);
+      if(wr[1]) localTarget={lat:wr[1][0],lon:wr[1][1]};
+    }
+    const p=safeStepToward(pos,localTarget,Math.min(step,dTarget));
     pos.lat=p.lat; pos.lon=p.lon; pos.cog=p.cog;
+    if(isLand(pos.lat,pos.lon)){const w=nearestWater(pos.lat,pos.lon);pos.lat=w.lat;pos.lon=w.lon;}
     save();return;
   }
 
