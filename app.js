@@ -7,7 +7,7 @@ let vectorField = [], vectorFetchKey = '', vectorFetchInFlight = false, lastVect
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
 let boatNav = { active: null, route: [], idx: 1, pending: false, source: 'client' };
-const APP_VERSION = '2026-05-02-pwa20';
+const APP_VERSION = '2026-05-02-pwa21';
 const DEFAULT_ROUTE_API_URL = 'https://regatta-route-api.onrender.com';
 const query = new URLSearchParams(location.search);
 const routeApiParam = query.get('routeApi');
@@ -350,9 +350,8 @@ function render(){
   overlays.forEach(o=>o.remove());overlays=[];
 
   if(marks.length>1){
-    // Blå løype = enkel, tydelig bane rett gjennom bøyene brukeren har satt.
-    // Demo-båten har egen landvakt, så kartbildet ikke blir krøllete.
-    const pts=marks.map(m=>[m.lat,m.lon]);
+    // Blå løype viser nå faktisk regattarunding: inn-punkt, bue rundt bøya, ut-punkt.
+    const pts=roundedCourseDisplayRoute();
     routeLine=L.polyline(pts,{color:'#60a5fa',weight:3.8,opacity:0.95}).addTo(map);
   }
   marks.forEach((m,i)=>{
@@ -397,7 +396,7 @@ function safeStepToward(from,target,meters,preferredBrg=null){
 }
 
 function resetBoatNav(){
-  boatNav = { active: null, route: [], idx: 1, pending: false, source: 'client' };
+  boatNav = { active: null, route: [], idx: 1, pending: false, source: 'client', rounding: false, roundingPlanned: false };
 }
 
 function navTargetForMark(mark){
@@ -425,26 +424,41 @@ function routeIsClear(route){
 }
 function arcAroundMark(mark,from,next){
   const pass=+$('radius').value||60;
-  const r=Math.max(35,Math.min(95,pass*0.9));
+  const r=Math.max(45,Math.min(110,pass*1.0));
   const c={lat:mark.lat,lon:mark.lon};
   const startA=bearing(c.lat,c.lon,from.lat,from.lon);
   const endA=bearing(c.lat,c.lon,next.lat,next.lon);
   const make=(dir)=>{
     let delta=dir>0 ? (endA-startA+360)%360 : -((startA-endA+360)%360);
-    if(Math.abs(delta)<125) delta += dir*180;
-    if(Math.abs(delta)>240) delta -= dir*120;
-    const steps=Math.max(5,Math.ceil(Math.abs(delta)/24));
+    if(Math.abs(delta)<150) delta += dir*180; // tydelig regattabue, ikke bare touch-and-go
+    if(Math.abs(delta)>285) delta -= dir*120;
+    const steps=Math.max(7,Math.ceil(Math.abs(delta)/18));
     const pts=[];
     for(let i=0;i<=steps;i++){
       const p=dest(c.lat,c.lon,norm(startA+delta*i/steps),r);
-      const w=nearestWater(p.lat,p.lon);
-      pts.push([w.lat,w.lon]);
+      const w=isLand(p.lat,p.lon)?nearestWater(p.lat,p.lon):p;
+      // Ikke la grov landmaske trekke rundingsbuen inn i selve bøyepunktet.
+      const use=distance(w.lat,w.lon,c.lat,c.lon) < r*0.45 ? p : w;
+      pts.push([use.lat,use.lon]);
     }
     return pts;
   };
   const choices=[make(1),make(-1)].filter(routeIsClear);
   if(!choices.length) return make(1);
   return choices.sort((a,b)=>a.length-b.length)[0];
+}
+function roundingRouteForIndex(i,fromOverride=null){
+  if(i<=0||i>=marks.length-1||marks[i].type!=='runding')return [];
+  return arcAroundMark(marks[i], fromOverride||marks[i-1], marks[i+1]);
+}
+function roundedCourseDisplayRoute(){
+  if(marks.length<2)return marks.map(m=>[m.lat,m.lon]);
+  let pts=[[marks[0].lat,marks[0].lon]];
+  for(let i=1;i<marks.length;i++){
+    if(i<marks.length-1 && marks[i].type==='runding') pts=appendRoute(pts,roundingRouteForIndex(i));
+    else pts=appendRoute(pts,[[marks[i].lat,marks[i].lon]]);
+  }
+  return pts;
 }
 function activeRouteTarget(defaultTarget){
   const last=boatNav.route?.[boatNav.route.length-1];
@@ -480,17 +494,17 @@ function warmRouteApi(){
   if(ROUTE_API_URL)fetch(`${ROUTE_API_URL}/health`).catch(()=>{});
 }
 
-function requestServerBoatRoute(target,extraRoute=[],rounding=false){
+function requestServerBoatRoute(target,extraRoute=[],rounding=false,roundingPlanned=false){
   if(!ROUTE_API_URL||!pos)return false;
-  boatNav={active,route:[],idx:1,pending:true,source:'server',rounding};
+  boatNav={active,route:[],idx:1,pending:true,source:'server',rounding,roundingPlanned};
   setStatus('Beregner sjørute');
   fetchServerRoute({lat:pos.lat,lon:pos.lon},target).then(r=>{
     // Ikke overskriv hvis brukeren har byttet aktiv bøye mens API-et jobbet.
     if(boatNav.active!==active)return;
-    boatNav={active,route:appendRoute(r.route,extraRoute),idx:1,pending:false,source:r.source||'server',rounding};
+    boatNav={active,route:appendRoute(r.route,extraRoute),idx:1,pending:false,source:r.source||'server',rounding,roundingPlanned};
   }).catch(err=>{
     console.warn('Sea route API failed',err);
-    if(boatNav.active===active)boatNav={active,route:[],idx:1,pending:false,source:'server-error',rounding:false};
+    if(boatNav.active===active)boatNav={active,route:[],idx:1,pending:false,source:'server-error',rounding:false,roundingPlanned:false};
     setStatus('Sjørute-feil');
   });
   return true;
@@ -498,18 +512,18 @@ function requestServerBoatRoute(target,extraRoute=[],rounding=false){
 
 function planBoatRouteToActive(){
   if(!pos||!marks.length||active>=marks.length)return null;
-  const target=navTargetForMark(marks[active]);
-  if(ROUTE_API_URL){requestServerBoatRoute(target,[],false);return target;}
-  const route=waterRoute([pos.lat,pos.lon],[target.lat,target.lon]);
-  boatNav={active,route,idx:1,pending:false,source:'client',rounding:false};
-  return target;
-}
-
-function startRoundingActiveMark(){
-  if(!shouldRoundActiveMark()||!pos)return false;
-  const arc=arcAroundMark(marks[active],pos,marks[active+1]);
-  boatNav={active,route:appendRoute([[pos.lat,pos.lon]],arc),idx:1,pending:false,source:'rounding-arc',rounding:true};
-  return true;
+  let target=navTargetForMark(marks[active]);
+  let extraRoute=[], roundingPlanned=false;
+  if(shouldRoundActiveMark()){
+    // Planlegg som i regatta: seil til inn-punktet, ta bue rundt bøya, ut mot neste legg.
+    extraRoute=roundingRouteForIndex(active);
+    target=routePointObj(extraRoute[0]);
+    roundingPlanned=true;
+  }
+  if(ROUTE_API_URL){requestServerBoatRoute(target,extraRoute,false,roundingPlanned);return activeRouteTarget(target);}
+  const route=appendRoute(waterRoute([pos.lat,pos.lon],[target.lat,target.lon]),extraRoute);
+  boatNav={active,route,idx:1,pending:false,source:'client',rounding:false,roundingPlanned};
+  return activeRouteTarget(target);
 }
 
 function currentBoatWaypoint(target){
@@ -649,10 +663,6 @@ function advanceBoatOnCourse(dtSec){
     const dTarget=distance(pos.lat,pos.lon,target.lat,target.lon);
     const dMark=distance(pos.lat,pos.lon,targetMark.lat,targetMark.lon);
 
-    if(rounding && !boatNav.rounding && Math.min(dTarget,dMark) <= Math.max(step,radius*1.15)){
-      startRoundingActiveMark();
-    }
-
     if(!rounding && Math.min(dTarget,dMark) <= Math.max(step,radius)){
       // Marker bøyen som rundet når vi er innen passering, men flytt ikke båten inn på land.
       if(active < marks.length-1){active++;resetBoatNav();}
@@ -666,7 +676,7 @@ function advanceBoatOnCourse(dtSec){
     safeAdvanceTowardWaypoint(waypoint,step);
 
     if(boatNav.route&&boatNav.idx>=boatNav.route.length-1&&distance(pos.lat,pos.lon,target.lat,target.lon)<Math.max(24,step*2)){
-      if(boatNav.rounding && active < marks.length-1) active++;
+      if((boatNav.rounding||boatNav.roundingPlanned) && active < marks.length-1) active++;
       resetBoatNav();
     }
     if(isLand(pos.lat,pos.lon)){const w=nearestWater(pos.lat,pos.lon);pos.lat=w.lat;pos.lon=w.lon;resetBoatNav();}
@@ -756,7 +766,7 @@ $('setBoatStart').onclick=()=>{
   $('setBoatStart').textContent=pendingBoatStart?'Trykk på kartet':'Endre båtens startpunkt';
 };
 $('sample').onclick=()=>{
-  marks=[{name:'Start',lat:59.2015,lon:10.7663,type:'start'},{name:'Bøye 2',lat:59.2165,lon:10.7705,type:'runding'},{name:'Bunn',lat:59.193,lon:10.792,type:'runding'},{name:'Mål',lat:59.2017,lon:10.767,type:'mål'}].map(m=>{const n=nearestWater(m.lat,m.lon);return{...m,lat:n.lat,lon:n.lon};});
+  marks=[{name:'Start',lat:59.2015,lon:10.7663,type:'start'},{name:'Bøye 2',lat:59.2165,lon:10.7705,type:'runding'},{name:'Bunn',lat:59.193,lon:10.792,type:'runding'},{name:'Mål',lat:59.2017,lon:10.767,type:'mål'}];
   active=0;
   pos={lat:marks[0].lat,lon:marks[0].lon,sog:ms(+$('simSpeed').value||5.5),cog:+$('simHeading').value||210};
   active=marks.length>1?1:0;

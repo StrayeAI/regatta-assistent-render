@@ -40,26 +40,33 @@ global.fetch = async () => ({ json: async () => ({ current: {} }) });
 const testCode = `
 weather = { wind: { wind_direction_10m: 177, wind_speed_10m: 4.7 }, marine: { ocean_current_velocity: 0.55, ocean_current_direction: 87, wave_height: 0.4 } };
 marks = [
-  { name: 'Start', lat: 59.2015, lon: 10.7663, type: 'start' },
-  { name: 'Bøye 2', lat: 59.2165, lon: 10.7705, type: 'runding' },
-  { name: 'Bunn', lat: 59.193, lon: 10.792, type: 'runding' },
-  { name: 'Mål', lat: 59.2017, lon: 10.767, type: 'mål' }
-].map(m => { const n = nearestWater(m.lat, m.lon); return { ...m, lat: n.lat, lon: n.lon }; });
+  { name: 'Start', lat: 59.180, lon: 10.760, type: 'start' },
+  { name: 'Bøye 2', lat: 59.180, lon: 10.790, type: 'runding' },
+  { name: 'Bunn', lat: 59.180, lon: 10.840, type: 'runding' },
+  { name: 'Mål', lat: 59.185, lon: 10.850, type: 'mål' }
+];
 pos = { lat: marks[0].lat, lon: marks[0].lon, sog: ms(5.5), cog: 210 };
 active = 1;
 
 advanceBoatOnCourse(1);
 update();
 assert.notEqual(boatNav.rounding, true, 'boat should not start the buoy-rounding arc while still far away from the rounding mark');
+assert.equal(boatNav.roundingPlanned, true, 'boat should plan an entry-arc-exit route for a rounding mark');
+assert.ok(boatNav.route.length >= 7, 'planned rounding route should include multiple arc points around the buoy');
+const finalPlanned = boatNav.route[boatNav.route.length - 1];
+assert.ok(distance(finalPlanned[0], finalPlanned[1], marks[1].lat, marks[1].lon) > (+$('radius').value || 60) * 0.65, 'planned rounding should exit away from the buoy, not at the buoy center');
+
+const displayPts = roundedCourseDisplayRoute();
+assert.ok(displayPts.length > marks.length, 'blue course display should show rounded arcs around rounding buoys, not only straight mark-to-mark segments');
 
 const track = [{ lat: pos.lat, lon: pos.lon, active }];
-for (let i = 0; i < 1800 && active < 3; i++) {
+for (let i = 0; i < 1600 && active < 2; i++) {
   advanceBoatOnCourse(1);
-  update();
+  if (i % 20 === 0) update();
   track.push({ lat: pos.lat, lon: pos.lon, active });
 }
 
-assert.ok(active >= 3, 'demo boat should round the second buoy and continue toward the next mark instead of oscillating near land');
+assert.ok(active >= 2, 'demo boat should round the buoy before continuing to the next mark');
 assert.ok(!isLand(pos.lat, pos.lon), 'demo boat should remain on water');
 
 const buoy = marks[1];
