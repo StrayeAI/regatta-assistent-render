@@ -5,8 +5,11 @@ let marks = [], active = 0, pos = null, weather = null, lastFetch = 0;
 let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simTimer = null, vectorOverlay = null;
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
-let boatNav = { active: null, route: [], idx: 1 };
-const APP_VERSION = '2026-05-02-pwa13';
+let boatNav = { active: null, route: [], idx: 1, pending: false, source: 'client' };
+const APP_VERSION = '2026-05-02-pwa14';
+const query = new URLSearchParams(location.search);
+if(query.get('routeApi')) localStorage.regattaRouteApiUrl = query.get('routeApi');
+const ROUTE_API_URL = (query.get('routeApi') || localStorage.regattaRouteApiUrl || window.REGATTA_ROUTE_API_URL || '').replace(/\/$/,'');
 
 if (localStorage.regattaAppVersion !== APP_VERSION) {
   localStorage.regattaAppVersion = APP_VERSION;
@@ -339,7 +342,7 @@ function safeStepToward(from,target,meters,preferredBrg=null){
 }
 
 function resetBoatNav(){
-  boatNav = { active: null, route: [], idx: 1 };
+  boatNav = { active: null, route: [], idx: 1, pending: false, source: 'client' };
 }
 
 function navTargetForMark(mark){
@@ -347,16 +350,48 @@ function navTargetForMark(mark){
   return {lat:w.lat,lon:w.lon};
 }
 
+async function fetchServerRoute(from,target,opts={}){
+  if(!ROUTE_API_URL)return null;
+  const params=new URLSearchParams({
+    from:`${from.lat},${from.lon}`,
+    to:`${target.lat},${target.lon}`,
+    clearance:String(opts.clearance||25),
+    grid:String(opts.grid||45),
+    margin:String(opts.margin||1200)
+  });
+  const r=await fetch(`${ROUTE_API_URL}/route?${params}`).then(x=>x.json());
+  if(!r.ok||!Array.isArray(r.route)||r.route.length<2)throw new Error(r.error||'Ugyldig sjørute');
+  return r;
+}
+
+function requestServerBoatRoute(target){
+  if(!ROUTE_API_URL||!pos)return false;
+  boatNav={active,route:[],idx:1,pending:true,source:'server'};
+  setStatus('Beregner sjørute');
+  fetchServerRoute({lat:pos.lat,lon:pos.lon},target).then(r=>{
+    // Ikke overskriv hvis brukeren har byttet aktiv bøye mens API-et jobbet.
+    if(boatNav.active!==active)return;
+    boatNav={active,route:r.route,idx:1,pending:false,source:r.source||'server'};
+  }).catch(err=>{
+    console.warn('Sea route API failed',err);
+    if(boatNav.active===active)boatNav={active,route:[],idx:1,pending:false,source:'server-error'};
+    setStatus('Sjørute-feil');
+  });
+  return true;
+}
+
 function planBoatRouteToActive(){
   if(!pos||!marks.length||active>=marks.length)return null;
   const target=navTargetForMark(marks[active]);
+  if(ROUTE_API_URL){requestServerBoatRoute(target);return target;}
   const route=waterRoute([pos.lat,pos.lon],[target.lat,target.lon]);
-  boatNav={active,route,idx:1};
+  boatNav={active,route,idx:1,pending:false,source:'client'};
   return target;
 }
 
 function currentBoatWaypoint(target){
   if(boatNav.active!==active||!boatNav.route||boatNav.route.length<2)planBoatRouteToActive();
+  if(boatNav.pending)return null;
   while(boatNav.idx < boatNav.route.length && distance(pos.lat,pos.lon,boatNav.route[boatNav.idx][0],boatNav.route[boatNav.idx][1]) < 18) boatNav.idx++;
   const wp=boatNav.route[Math.min(boatNav.idx,boatNav.route.length-1)];
   return wp?{lat:wp[0],lon:wp[1]}:target;
@@ -498,6 +533,7 @@ function advanceBoatOnCourse(dtSec){
 
     if(boatNav.active!==active||!boatNav.route||boatNav.route.length<2)planBoatRouteToActive();
     const waypoint=currentBoatWaypoint(target);
+    if(!waypoint){save();return;}
     safeAdvanceTowardWaypoint(waypoint,step);
 
     if(boatNav.route&&boatNav.idx>=boatNav.route.length-1&&distance(pos.lat,pos.lon,target.lat,target.lon)<Math.max(24,step*2)){

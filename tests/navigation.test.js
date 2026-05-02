@@ -23,6 +23,7 @@ global.document = {
   createElement() { return { style: {}, innerHTML: '', appendChild(){} }; }
 };
 global.window = { addEventListener(){}, _vecTimer: null };
+global.location = { search: '' };
 global.navigator = { serviceWorker: { register(){ return { catch(){} }; } }, geolocation: { watchPosition(){} } };
 global.L = {
   map(){ return { setView(){ return this; }, getBounds(){ return { getNorth(){ return 59.23; }, getSouth(){ return 59.18; }, getEast(){ return 10.85; }, getWest(){ return 10.72; } }; }, on(){}, getZoom(){ return 13; } }; },
