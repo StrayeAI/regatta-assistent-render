@@ -6,10 +6,12 @@ let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simT
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
 let boatNav = { active: null, route: [], idx: 1, pending: false, source: 'client' };
-const APP_VERSION = '2026-05-02-pwa14';
+const APP_VERSION = '2026-05-02-pwa15';
+const DEFAULT_ROUTE_API_URL = 'https://regatta-route-api.onrender.com';
 const query = new URLSearchParams(location.search);
-if(query.get('routeApi')) localStorage.regattaRouteApiUrl = query.get('routeApi');
-const ROUTE_API_URL = (query.get('routeApi') || localStorage.regattaRouteApiUrl || window.REGATTA_ROUTE_API_URL || '').replace(/\/$/,'');
+const routeApiParam = query.get('routeApi');
+if(routeApiParam && routeApiParam !== 'off') localStorage.regattaRouteApiUrl = routeApiParam;
+const ROUTE_API_URL = (routeApiParam === 'off' ? '' : (routeApiParam || localStorage.regattaRouteApiUrl || window.REGATTA_ROUTE_API_URL || DEFAULT_ROUTE_API_URL || '')).replace(/\/$/,'');
 
 if (localStorage.regattaAppVersion !== APP_VERSION) {
   localStorage.regattaAppVersion = APP_VERSION;
