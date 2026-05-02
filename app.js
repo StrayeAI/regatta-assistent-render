@@ -6,7 +6,7 @@ let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simT
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
 let boatNav = { active: null, route: [], idx: 1 };
-const APP_VERSION = '2026-05-02-pwa12';
+const APP_VERSION = '2026-05-02-pwa13';
 
 if (localStorage.regattaAppVersion !== APP_VERSION) {
   localStorage.regattaAppVersion = APP_VERSION;
@@ -19,6 +19,8 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 20,
   attribution: '© OSM'
 }).addTo(map);
+
+function setStatus(text){$('status').textContent=`${text} · ${APP_VERSION.replace('2026-05-02-','')}`;}
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; $('install').hidden = false; });
@@ -137,11 +139,17 @@ function routeIsSafe(path){
 function simplifyRoute(path){
   if(path.length<=2)return path;
   const out=[path[0]];
-  for(let i=1;i<path.length-1;i++){
-    const prev=out[out.length-1], next=path[i+1];
-    if(crossesLand(prev,next))out.push(path[i]);
+  let i=0;
+  // Any-angle smoothing: hopp til fjerneste synlige punkt. Dette fjerner
+  // grid-hakk og U-svinger, men beholder land-/kystlinje-sjekken.
+  while(i<path.length-1){
+    let best=i+1;
+    for(let j=path.length-1;j>i+1;j--){
+      if(!crossesLand(path[i],path[j])){best=j;break;}
+    }
+    out.push(path[best]);
+    i=best;
   }
-  out.push(path[path.length-1]);
   return out;
 }
 function searchWaterRoute(A,B,pad,n){
@@ -155,24 +163,35 @@ function searchWaterRoute(A,B,pad,n){
   let siSj=nearestIdx(...idx(A)),giGj=nearestIdx(...idx(B));
   if(!siSj||!giGj)return null;
   const [si,sj]=siSj,[gi,gj]=giGj;
-  const open=[{i:si,j:sj,f:0}],came=new Map(),distG=new Map([[key(si,sj),0]]),seen=new Set();
+  const startKey=key(si,sj), goalKey=key(gi,gj);
+  const open=[{i:si,j:sj,f:0}],parent=new Map([[startKey,null]]),distG=new Map([[startKey,0]]),seen=new Set();
   const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
   while(open.length){
     open.sort((x,y)=>x.f-y.f);
     const cur=open.shift(),ck=key(cur.i,cur.j);
     if(seen.has(ck))continue; seen.add(ck);
-    if(cur.i===gi&&cur.j===gj){
+    if(ck===goalKey){
       const path=[B];let k=ck;
-      while(came.has(k)){const [i,j]=k.split(',').map(Number);path.push(node(i,j));k=came.get(k);}
+      while(k){const [i,j]=k.split(',').map(Number);path.push(node(i,j));k=parent.get(k);}
       path.push(A);
       const route=simplifyRoute(path.reverse());
       return routeIsSafe(route)?route:null;
     }
     for(const [di,dj] of dirs){
       const ni=cur.i+di,nj=cur.j+dj;if(!walk(ni,nj))continue;
-      const from=node(cur.i,cur.j),to=node(ni,nj);if(crossesLand(from,to))continue;
-      const nk=key(ni,nj),ng=(distG.get(ck)||0)+distance(from[0],from[1],to[0],to[1]);
-      if(ng<(distG.get(nk)??Infinity)){came.set(nk,ck);distG.set(nk,ng);open.push({i:ni,j:nj,f:ng+distance(to[0],to[1],B[0],B[1])});}
+      const to=node(ni,nj),curPt=node(cur.i,cur.j);if(crossesLand(curPt,to))continue;
+      const nk=key(ni,nj);
+      let fromKey=ck,fromPt=curPt,baseG=distG.get(ck)||0;
+      const pk=parent.get(ck);
+      if(pk){
+        const [pi,pj]=pk.split(',').map(Number),pp=node(pi,pj);
+        if(!crossesLand(pp,to)){fromKey=pk;fromPt=pp;baseG=distG.get(pk)||0;}
+      }
+      const ng=baseG+distance(fromPt[0],fromPt[1],to[0],to[1]);
+      if(ng<(distG.get(nk)??Infinity)){
+        parent.set(nk,fromKey);distG.set(nk,ng);
+        open.push({i:ni,j:nj,f:ng+distance(to[0],to[1],B[0],B[1])});
+      }
     }
   }
   return null;
@@ -410,7 +429,7 @@ function renderRecommended(){
 
 function update(){
   if(!pos||!weather)return;
-  if(active>=marks.length){$('leg').innerHTML=`Ferdig`;return;}
+  if(active>=marks.length){$('leg').innerHTML=`Ferdig`;setStatus('Ferdig');return;}
   const t=marks[active];
   const brg=bearing(pos.lat,pos.lon,t.lat,t.lon);
   const dst=distance(pos.lat,pos.lon,t.lat,t.lon);
@@ -428,14 +447,14 @@ function update(){
 }
 
 async function fetchData(lat,lon){
-  $('status').textContent='Henter vær...';
+  setStatus('Henter vær...');
   try{
     const wx=`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=ms&timezone=auto`;
     const sea=`https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}&current=ocean_current_velocity,ocean_current_direction,wave_height,wave_direction&timezone=auto`;
     const [w,m]=await Promise.all([fetch(wx).then(r=>r.json()),fetch(sea).then(r=>r.json())]);
     weather={wind:w.current,marine:m.current};
-    $('status').textContent='Live';
-  }catch{ simWeatherFallback();$('status').textContent='Demo';}
+    setStatus('Live');
+  }catch{ simWeatherFallback();setStatus('Demo');}
   renderVectors();
 }
 

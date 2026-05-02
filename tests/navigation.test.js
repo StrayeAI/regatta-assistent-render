@@ -57,6 +57,13 @@ const red = recommendedRouteTo(target);
 for (let i = 1; i < red.length; i++) {
   assert.ok(!crossesLand(red[i - 1], red[i]), 'recommended red segment should not cross land');
 }
+
+const route = waterRoute([marks[2].lat, marks[2].lon], [marks[3].lat, marks[3].lon]);
+for (let i = 2; i < route.length; i++) {
+  const prev = bearing(route[i - 2][0], route[i - 2][1], route[i - 1][0], route[i - 1][1]);
+  const next = bearing(route[i - 1][0], route[i - 1][1], route[i][0], route[i][1]);
+  assert.ok(Math.abs(diff(next, prev)) < 140, 'boat water route should not contain U-turn/backtracking segments');
+}
 `;
 
 eval(harness + '\n' + appSource + '\n' + testCode);
