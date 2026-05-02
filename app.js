@@ -6,7 +6,7 @@ let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simT
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
 let boatNav = { active: null, route: [], idx: 1, pending: false, source: 'client' };
-const APP_VERSION = '2026-05-02-pwa15';
+const APP_VERSION = '2026-05-02-pwa16';
 const DEFAULT_ROUTE_API_URL = 'https://regatta-route-api.onrender.com';
 const query = new URLSearchParams(location.search);
 const routeApiParam = query.get('routeApi');
@@ -361,9 +361,24 @@ async function fetchServerRoute(from,target,opts={}){
     grid:String(opts.grid||45),
     margin:String(opts.margin||1200)
   });
-  const r=await fetch(`${ROUTE_API_URL}/route?${params}`).then(x=>x.json());
-  if(!r.ok||!Array.isArray(r.route)||r.route.length<2)throw new Error(r.error||'Ugyldig sjørute');
-  return r;
+  let lastErr=null;
+  for(let attempt=1;attempt<=3;attempt++){
+    try{
+      const r=await fetch(`${ROUTE_API_URL}/route?${params}`);
+      if(!r.ok)throw new Error(`Sjørute API HTTP ${r.status}`);
+      const data=await r.json();
+      if(!data.ok||!Array.isArray(data.route)||data.route.length<2)throw new Error(data.error||'Ugyldig sjørute');
+      return data;
+    }catch(err){
+      lastErr=err;
+      await new Promise(resolve=>setTimeout(resolve,attempt*900));
+    }
+  }
+  throw lastErr||new Error('Sjørute API svarte ikke');
+}
+
+function warmRouteApi(){
+  if(ROUTE_API_URL)fetch(`${ROUTE_API_URL}/health`).catch(()=>{});
 }
 
 function requestServerBoatRoute(target){
@@ -606,7 +621,7 @@ $('sim').onclick=async()=>{
     pos.sog=ms(+$('simSpeed').value||5.5);pos.cog=+$('simHeading').value||210;
     resetBoatNav();
   }
-  await fetchData(pos.lat,pos.lon);
+  fetchData(pos.lat,pos.lon).finally(()=>update());
   save();
   startSimLoop();
   update();
@@ -641,6 +656,7 @@ $('setPin').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');lin
 $('setBoat').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');line.boat={lat:pos.lat,lon:pos.lon};save();render();};
 
 load();
+warmRouteApi();
 render();
 if(!weather)simWeatherFallback();
 setTimeout(()=>{if(pos)update();},800);
