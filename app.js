@@ -5,7 +5,8 @@ let marks = [], active = 0, pos = null, weather = null, lastFetch = 0;
 let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simTimer = null, vectorOverlay = null;
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
-const APP_VERSION = '2026-05-02-pwa11';
+let boatNav = { active: null, route: [], idx: 1 };
+const APP_VERSION = '2026-05-02-pwa12';
 
 if (localStorage.regattaAppVersion !== APP_VERSION) {
   localStorage.regattaAppVersion = APP_VERSION;
@@ -203,9 +204,10 @@ function waterRoute(a,b){
   const A=[s.lat,s.lon],B=[g.lat,g.lon];
   if(!crossesLand(A,B))return [A,B];
 
-  // Prøv først lokal og ryddig rute. Hvis hindringen er større enn boksen,
-  // ekspander søket. Viktigst: returner aldri [A,B] når den krysser land.
-  for(const [pad,n] of [[.018,32],[.036,38],[.065,44],[.095,50]]){
+  // Prøv først lokal og ryddig rute med nok oppløsning til trange sund.
+  // Hvis hindringen er større enn boksen, ekspander søket. Viktigst:
+  // returner aldri [A,B] når den krysser land.
+  for(const [pad,n] of [[.026,50],[.036,56],[.055,62],[.085,70],[.12,76]]){
     const route=searchWaterRoute(A,B,pad,n);
     if(route)return route;
   }
@@ -317,6 +319,47 @@ function safeStepToward(from,target,meters,preferredBrg=null){
   return best || {...nearestWater(from.lat,from.lon),cog:base};
 }
 
+function resetBoatNav(){
+  boatNav = { active: null, route: [], idx: 1 };
+}
+
+function navTargetForMark(mark){
+  const w=nearestWater(mark.lat,mark.lon);
+  return {lat:w.lat,lon:w.lon};
+}
+
+function planBoatRouteToActive(){
+  if(!pos||!marks.length||active>=marks.length)return null;
+  const target=navTargetForMark(marks[active]);
+  const route=waterRoute([pos.lat,pos.lon],[target.lat,target.lon]);
+  boatNav={active,route,idx:1};
+  return target;
+}
+
+function currentBoatWaypoint(target){
+  if(boatNav.active!==active||!boatNav.route||boatNav.route.length<2)planBoatRouteToActive();
+  while(boatNav.idx < boatNav.route.length && distance(pos.lat,pos.lon,boatNav.route[boatNav.idx][0],boatNav.route[boatNav.idx][1]) < 18) boatNav.idx++;
+  const wp=boatNav.route[Math.min(boatNav.idx,boatNav.route.length-1)];
+  return wp?{lat:wp[0],lon:wp[1]}:target;
+}
+
+function safeAdvanceTowardWaypoint(waypoint,step){
+  const brg=bearing(pos.lat,pos.lon,waypoint.lat,waypoint.lon);
+  const d=distance(pos.lat,pos.lon,waypoint.lat,waypoint.lon);
+  const move=Math.min(step,d);
+  const p=dest(pos.lat,pos.lon,brg,move);
+  if(!isLand(p.lat,p.lon)&&!crossesLand([pos.lat,pos.lon],[p.lat,p.lon])){
+    pos.lat=p.lat;pos.lon=p.lon;pos.cog=brg;
+    return true;
+  }
+  // Hvis en lagret rute ble ugyldig ved kyst/zoomdata, planlegg på nytt før lokal fallback.
+  resetBoatNav();
+  const q=safeStepToward(pos,waypoint,move,brg);
+  const moved=distance(pos.lat,pos.lon,q.lat,q.lon)>0.05;
+  pos.lat=q.lat;pos.lon=q.lon;pos.cog=q.cog;
+  return moved;
+}
+
 function safeProjection(start,course,maxMeters=850){
   // Kort anbefalt kurs fremover, ikke en hel rute til bøyen.
   // Stopper eller bøyer av før land.
@@ -402,6 +445,7 @@ function simWeatherFallback(){
 
 function setBoatStart(lat,lon,keep=false){
   pos={lat,lon,sog:ms(+$('simSpeed').value||5.5),cog:+$('simHeading').value||210};
+  resetBoatNav();
   pendingBoatStart=false;
   $('setBoatStart').classList.remove('armed');
   $('setBoatStart').textContent='Endre båtens startpunkt';
@@ -416,26 +460,31 @@ function advanceBoatOnCourse(dtSec){
   const speedMs=ms(+$('simSpeed').value||5.5);
   pos.sog=speedMs;
 
-  // Demo-båten følger neste bøye, men har lokal landvakt så den ikke kjører på land.
+  // Demo-båten navigerer til bøyene via egen trygg vannrute.
+  // Den røde stiplete anbefalingen er KUN visning og brukes ikke til båtnavigasjon.
   if(marks.length){
-    if(active <= 0 && distance(pos.lat,pos.lon,marks[0].lat,marks[0].lon) < (+$('radius').value||60) && marks.length>1) active=1;
-    const target=marks[Math.min(active,marks.length-1)];
+    const radius=+$('radius').value||60;
+    if(active <= 0 && distance(pos.lat,pos.lon,marks[0].lat,marks[0].lon) < radius && marks.length>1){active=1;resetBoatNav();}
+    const targetMark=marks[Math.min(active,marks.length-1)];
+    const target=navTargetForMark(targetMark);
     const step=Math.max(0.2,speedMs*dtSec);
     const dTarget=distance(pos.lat,pos.lon,target.lat,target.lon);
-    if(dTarget <= Math.max(step,(+$('radius').value||60)) && !crossesLand([pos.lat,pos.lon],[target.lat,target.lon])){
-      pos.lat=target.lat; pos.lon=target.lon;
-      if(active < marks.length-1) active++;
-      save(); return;
+    const dMark=distance(pos.lat,pos.lon,targetMark.lat,targetMark.lon);
+
+    if(Math.min(dTarget,dMark) <= Math.max(step,radius)){
+      // Marker bøyen som rundet når vi er innen passering, men flytt ikke båten inn på land.
+      if(active < marks.length-1){active++;resetBoatNav();}
+      save();return;
     }
-    // Dersom vi har land direkte mot målet, bruk første trygge punkt fra vannrute som lokal delmål.
-    let localTarget=target;
-    if(crossesLand([pos.lat,pos.lon],[target.lat,target.lon])){
-      const wr=waterRoute([pos.lat,pos.lon],[target.lat,target.lon]);
-      if(wr[1]) localTarget={lat:wr[1][0],lon:wr[1][1]};
+
+    if(boatNav.active!==active||!boatNav.route||boatNav.route.length<2)planBoatRouteToActive();
+    const waypoint=currentBoatWaypoint(target);
+    safeAdvanceTowardWaypoint(waypoint,step);
+
+    if(boatNav.route&&boatNav.idx>=boatNav.route.length-1&&distance(pos.lat,pos.lon,target.lat,target.lon)<Math.max(24,step*2)){
+      resetBoatNav();
     }
-    const p=safeStepToward(pos,localTarget,Math.min(step,dTarget));
-    pos.lat=p.lat; pos.lon=p.lon; pos.cog=p.cog;
-    if(isLand(pos.lat,pos.lon)){const w=nearestWater(pos.lat,pos.lon);pos.lat=w.lat;pos.lon=w.lon;}
+    if(isLand(pos.lat,pos.lon)){const w=nearestWater(pos.lat,pos.lon);pos.lat=w.lat;pos.lon=w.lon;resetBoatNav();}
     save();return;
   }
 
@@ -474,9 +523,10 @@ function addPointFromMap(latlng){
     active=marks.length>1?1:0;
     // Startpunkt i løypa er også startpunkt for demo-båten.
     pos={lat:latlng.lat,lon:latlng.lng,sog:ms(+$('simSpeed').value||5.5),cog:+$('simHeading').value||210};
+    resetBoatNav();
     fetchData(pos.lat,pos.lon).catch(()=>{});
   }
-  else marks.push({name,lat:latlng.lat,lon:latlng.lng,type});
+  else {marks.push({name,lat:latlng.lat,lon:latlng.lng,type});resetBoatNav();}
   save();render();update();
 }
 
@@ -493,9 +543,11 @@ $('sim').onclick=async()=>{
     // Demo skal alltid starte fra løypas Start-punkt når løype finnes.
     pos={lat:marks[0].lat,lon:marks[0].lon,sog:ms(+$('simSpeed').value||5.5),cog:+$('simHeading').value||210};
     active=marks.length>1?1:0;
+    resetBoatNav();
   } else {
     pos=pos||nearestWater(59.2025,10.767);
     pos.sog=ms(+$('simSpeed').value||5.5);pos.cog=+$('simHeading').value||210;
+    resetBoatNav();
   }
   await fetchData(pos.lat,pos.lon);
   save();
@@ -523,10 +575,11 @@ $('sample').onclick=()=>{
   active=0;
   pos={lat:marks[0].lat,lon:marks[0].lon,sog:ms(+$('simSpeed').value||5.5),cog:+$('simHeading').value||210};
   active=marks.length>1?1:0;
+  resetBoatNav();
   save();update();
 };
-$('clear').onclick=()=>{if(confirm('Tøm?')){marks=[];active=0;line={pin:null,boat:null};save();render();update();}};
-$('useHere').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');marks.push({name:`Merke ${marks.length+1}`,lat:pos.lat,lon:pos.lon,type:'merke'});save();render();update();};
+$('clear').onclick=()=>{if(confirm('Tøm?')){marks=[];active=0;line={pin:null,boat:null};resetBoatNav();save();render();update();}};
+$('useHere').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');marks.push({name:`Merke ${marks.length+1}`,lat:pos.lat,lon:pos.lon,type:'merke'});resetBoatNav();save();render();update();};
 $('setPin').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');line.pin={lat:pos.lat,lon:pos.lon};save();render();};
 $('setBoat').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');line.boat={lat:pos.lat,lon:pos.lon};save();render();};
 

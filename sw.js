@@ -1,10 +1,10 @@
-const CACHE = 'regatta-pwa-2026-05-02-pwa11';
+const CACHE = 'regatta-pwa-2026-05-02-pwa12';
 const ASSETS = [
   './',
   './index.html',
-  './app.js?v=2026-05-02-pwa11',
-  './style.css?v=2026-05-02-pwa11',
-  './manifest.webmanifest?v=2026-05-02-pwa11',
+  './app.js?v=2026-05-02-pwa12',
+  './style.css?v=2026-05-02-pwa12',
+  './manifest.webmanifest?v=2026-05-02-pwa12',
   './icon-192.png',
   './icon-512.png'
 ];
