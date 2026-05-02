@@ -7,8 +7,7 @@ let pendingBoatStart = false;
 
 const map = L.map('map').setView([59.205, 10.79], 13);
 const layers = L.layerGroup().addTo(map);
-const arrowLayer = L.layerGroup().addTo(map);
-let boatMarker, routeLine, redRouteLine, pressTimer = null;
+let boatMarker, routeLine, redRouteLine, vectorHud, pressTimer = null;
 let layLines = [];
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -52,6 +51,64 @@ function dest(lat, lon, brg, m) {
   return { lat: deg(phi2), lon: deg(lambda2) };
 }
 
+
+// Approximate land guard for Hankø demo area. This is not navigation-grade,
+// but it prevents the simulator/recommended demo line from crossing the obvious islands/mainland.
+const landPolygons = [
+  // Løkholmen
+  [[59.2144,10.7570],[59.2160,10.7620],[59.2151,10.7690],[59.2117,10.7708],[59.2092,10.7650],[59.2105,10.7580]],
+  // Hankø / Hankøsundet land mass near demo route
+  [[59.2200,10.7700],[59.2320,10.7820],[59.2300,10.8050],[59.2160,10.8060],[59.2110,10.7890]],
+  // Mainland east side in the demo viewport
+  [[59.1960,10.8060],[59.2360,10.8050],[59.2360,10.8800],[59.1880,10.8800],[59.1890,10.8250]],
+  // Southern small islands / shore
+  [[59.1900,10.7750],[59.2000,10.7840],[59.1990,10.8030],[59.1880,10.8060],[59.1830,10.7870]]
+];
+function xy(p) { return { x: p[1], y: p[0] }; }
+function ccw(a, b, c) { return (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x); }
+function segCross(a, b, c, d) { return ccw(a, c, d) !== ccw(b, c, d) && ccw(a, b, c) !== ccw(a, b, d); }
+function pointInPoly(lat, lon, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const yi = poly[i][0], xi = poly[i][1], yj = poly[j][0], xj = poly[j][1];
+    const hit = ((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+    if (hit) inside = !inside;
+  }
+  return inside;
+}
+function isLand(lat, lon) { return landPolygons.some(poly => pointInPoly(lat, lon, poly)); }
+function crossesLand(a, b) {
+  if (isLand(a[0], a[1]) || isLand(b[0], b[1])) return true;
+  const A = xy(a), B = xy(b);
+  return landPolygons.some(poly => poly.some((p, i) => segCross(A, B, xy(p), xy(poly[(i + 1) % poly.length]))));
+}
+function waterStep(from, course, meters) {
+  const tries = [0, -25, 25, -50, 50, -80, 80, 120, -120, 180];
+  for (const turn of tries) {
+    const c = norm(course + turn);
+    const p = dest(from.lat, from.lon, c, meters);
+    if (!crossesLand([from.lat, from.lon], [p.lat, p.lon])) return { ...p, cog: c };
+  }
+  return { lat: from.lat, lon: from.lon, cog: norm(course + 180) };
+}
+function safeRoutePoints(points) {
+  const out = [points[0]];
+  for (let i = 1; i < points.length; i++) {
+    const a = out[out.length - 1], b = points[i];
+    if (crossesLand(a, b)) {
+      const brg = bearing(a[0], a[1], b[0], b[1]);
+      const d = distance(a[0], a[1], b[0], b[1]);
+      const left = dest(a[0], a[1], norm(brg - 55), Math.min(Math.max(d * .45, 250), 900));
+      const right = dest(a[0], a[1], norm(brg + 55), Math.min(Math.max(d * .45, 250), 900));
+      const lp = [left.lat, left.lon], rp = [right.lat, right.lon];
+      const chosen = (!crossesLand(a, lp) && !crossesLand(lp, b)) ? lp : ((!crossesLand(a, rp) && !crossesLand(rp, b)) ? rp : null);
+      if (chosen) out.push(chosen);
+    }
+    out.push(b);
+  }
+  return out;
+}
+
 function save() {
   localStorage.regattaV2 = JSON.stringify({ marks, active, line, pos });
   render();
@@ -67,33 +124,29 @@ function load() {
   render();
 }
 
-function arrowIcon(label, course, color) {
-  return L.divIcon({
-    className: 'vectorIcon',
-    html: `<div class="arrow" style="--rot:${course}deg;--c:${color}">➤</div><small>${label}</small>`,
-    iconSize: [58, 42],
-    iconAnchor: [29, 21]
-  });
+function vectorNeedle(course, color) {
+  return `<span class="hudNeedle" style="--rot:${course}deg;--c:${color}">➤</span>`;
 }
-
+function ensureVectorHud() {
+  if (vectorHud) return vectorHud;
+  vectorHud = L.control({ position: 'topright' });
+  vectorHud.onAdd = () => {
+    const div = L.DomUtil.create('div', 'vectorHud');
+    L.DomEvent.disableClickPropagation(div);
+    return div;
+  };
+  vectorHud.addTo(map);
+  return vectorHud;
+}
 function renderVectors() {
-  arrowLayer.clearLayers();
-  if (!weather || !map.getBounds) return;
-  const center = pos || marks[0] || { lat: 59.205, lon: 10.79 };
+  if (!weather) return;
   const wind = weather.wind || {}, marine = weather.marine || {};
   const windTo = wind.wind_direction_10m == null ? null : norm(wind.wind_direction_10m + 180);
   const curTo = marine.ocean_current_direction == null ? null : Number(marine.ocean_current_direction);
-  if (windTo == null && curTo == null) return;
-
-  const zoom = map.getZoom();
-  const spacing = zoom >= 15 ? 550 : zoom >= 13 ? 900 : 1500;
-  const offsets = [-1, 0, 1];
-  offsets.forEach(ix => offsets.forEach(iy => {
-    const p = dest(center.lat, center.lon, 90, ix * spacing);
-    const q = dest(p.lat, p.lon, 0, iy * spacing);
-    if (windTo != null) L.marker([q.lat, q.lon], { icon: arrowIcon('vind', windTo, '#7dd3fc'), interactive: false, keyboard: false }).addTo(arrowLayer);
-    if (curTo != null) L.marker([q.lat, q.lon], { icon: arrowIcon('strøm', curTo, '#06d6a0'), interactive: false, keyboard: false, opacity: .9 }).addTo(arrowLayer);
-  }));
+  const box = ensureVectorHud().getContainer();
+  box.innerHTML = `
+    <div class="hudRow wind">${windTo == null ? '' : vectorNeedle(windTo, '#7dd3fc')}<span>Vind</span><b>${wind.wind_speed_10m == null ? '–' : wind.wind_speed_10m.toFixed(1)} m/s fra ${wind.wind_direction_10m == null ? '–' : Math.round(wind.wind_direction_10m)}°</b></div>
+    <div class="hudRow current">${curTo == null ? '' : vectorNeedle(curTo, '#06d6a0')}<span>Strøm</span><b>${marine.ocean_current_velocity == null ? '–' : marine.ocean_current_velocity.toFixed(2)} m/s mot ${curTo == null ? '–' : Math.round(curTo)}°</b></div>`;
 }
 
 function render() {
@@ -236,7 +289,7 @@ function drawRecommendedRoute(r, target) {
     const mid = dest(pos.lat, pos.lon, r.best, Math.min(total * .55, 1400));
     pts.push([mid.lat, mid.lon], [target.lat, target.lon]);
   }
-  redRouteLine = L.polyline(pts, { color: '#ff1744', weight: 4, opacity: .95, className: 'recommendedRoute' }).addTo(map);
+  redRouteLine = L.polyline(safeRoutePoints(pts), { color: '#ff1744', weight: 4, opacity: .95, className: 'recommendedRoute' }).addTo(map);
 }
 
 function setBoatStart(lat, lon, keepSimRunning = false) {
@@ -272,7 +325,6 @@ map.on('mousedown touchstart', e => {
 });
 map.on('mouseup mouseout touchend touchcancel dragstart move', () => clearTimeout(pressTimer));
 map.on('click', e => { if (pendingBoatStart) setBoatStart(e.latlng.lat, e.latlng.lng); });
-map.on('moveend zoomend', renderVectors);
 
 $('start').onclick = () => {
   simOn = false;
@@ -280,7 +332,7 @@ $('start').onclick = () => {
   navigator.geolocation.watchPosition(async p => {
     pos = { lat: p.coords.latitude, lon: p.coords.longitude, sog: p.coords.speed || 0, cog: p.coords.heading || 0 };
     map.setView([pos.lat, pos.lon], map.getZoom());
-    if (Date.now() - lastFetch > 300000) {
+    if (Date.now() - lastFetch > 10000) {
       lastFetch = Date.now();
       try { await fetchData(pos.lat, pos.lon); }
       catch (e) { $('status').textContent = 'Værfeil'; $('advice').textContent = 'Klarte ikke hente vær/havdata: ' + e.message; }
@@ -295,10 +347,11 @@ function startSimLoop() {
   simTimer = setInterval(async () => {
     pos.sog = ms(+$('simSpeed').value || 5.5);
     pos.cog = +$('simHeading').value || 210;
-    const p = dest(pos.lat, pos.lon, pos.cog, pos.sog * 1);
+    const p = waterStep(pos, pos.cog, pos.sog * 1);
     pos.lat = p.lat;
     pos.lon = p.lon;
-    if (Date.now() - lastFetch > 300000) {
+    pos.cog = p.cog;
+    if (Date.now() - lastFetch > 10000) {
       lastFetch = Date.now();
       try { await fetchData(pos.lat, pos.lon); } catch {}
     }

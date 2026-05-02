@@ -4,7 +4,6 @@
 
 @media(min-width:1100px){main.pc{display:grid;grid-template-columns:2fr 1fr;gap:10px;align-items:start}.hero,.mapwrap{grid-column:1}.grid,.panel{grid-column:2}.mapwrap{height:72vh;min-height:620px}.grid{grid-template-columns:1fr 1fr}body{overflow-y:auto}}
 .recommendedRoute{stroke-dasharray:7 10;stroke-linecap:round;filter:drop-shadow(0 0 4px #ff1744)}
-.vectorIcon{pointer-events:none;text-align:center;color:white;text-shadow:0 1px 3px #001;font-weight:800}
-.vectorIcon .arrow{color:var(--c);font-size:24px;line-height:20px;transform:rotate(var(--rot));transform-origin:center;filter:drop-shadow(0 1px 2px #001)}
-.vectorIcon small{display:block;font-size:10px;margin-top:1px;background:#061826cc;border-radius:8px;padding:1px 4px}
 button.armed{background:#ef476f;box-shadow:0 0 0 3px #ffd16655}
+.vectorHud{background:#061826e6;border:1px solid #214b64;border-radius:12px;padding:6px 8px;color:#eef;box-shadow:0 4px 18px #0018;min-width:145px;pointer-events:none}
+.hudRow{display:grid;grid-template-columns:22px 42px 1fr;gap:4px;align-items:center;font-size:10px;line-height:1.05;margin:2px 0}.hudRow span{color:#9bb;text-transform:uppercase;letter-spacing:.04em}.hudRow b{font-size:10px;font-weight:800;white-space:nowrap}.hudNeedle{display:inline-block;color:var(--c);font-size:18px;line-height:18px;transform:rotate(var(--rot));transform-origin:center;filter:drop-shadow(0 1px 2px #001)}
