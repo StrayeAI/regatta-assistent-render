@@ -5,7 +5,7 @@ let marks = [], active = 0, pos = null, weather = null, lastFetch = 0;
 let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simTimer = null, vectorOverlay = null;
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
-const APP_VERSION = '2026-05-02-pwa4';
+const APP_VERSION = '2026-05-02-pwa5';
 
 if (localStorage.regattaAppVersion !== APP_VERSION) {
   localStorage.regattaAppVersion = APP_VERSION;
@@ -230,16 +230,47 @@ function setBoatStart(lat,lon,keep=false){
   map.setView([pos.lat,pos.lon],14);
 }
 
+function advanceBoatOnCourse(dtSec){
+  if(!pos)return;
+  const speedMs=ms(+$('simSpeed').value||5.5);
+  pos.sog=speedMs;
+
+  // Demo-båten skal følge blå løype i rekkefølge, ikke den røde anbefalte linjen.
+  if(marks.length){
+    if(active <= 0 && distance(pos.lat,pos.lon,marks[0].lat,marks[0].lon) < (+$('radius').value||60) && marks.length>1) active=1;
+    const target=marks[Math.min(active,marks.length-1)];
+    const d=distance(pos.lat,pos.lon,target.lat,target.lon);
+    const step=Math.max(0.2,speedMs*dtSec); // realistisk kartfart: knop -> m/s -> meter per tick
+    const brg=bearing(pos.lat,pos.lon,target.lat,target.lon);
+    pos.cog=brg;
+    if(d <= Math.max(step,(+$('radius').value||60))){
+      pos.lat=target.lat; pos.lon=target.lon;
+      if(active < marks.length-1) active++;
+    } else {
+      const p=dest(pos.lat,pos.lon,brg,step);
+      pos.lat=p.lat; pos.lon=p.lon;
+    }
+    save();
+    return;
+  }
+
+  // Hvis ingen løype er satt, bruk manuell kursinput.
+  pos.cog=+$('simHeading').value||210;
+  const p=dest(pos.lat,pos.lon,pos.cog,speedMs*dtSec);
+  pos.lat=p.lat; pos.lon=p.lon;
+}
+
 function startSimLoop(){
   clearInterval(simTimer);
+  let last=Date.now();
   simTimer=setInterval(()=>{
     if(!pos||!simOn)return;
-    pos.sog=ms(+$('simSpeed').value||5.5);
-    pos.cog=+$('simHeading').value||210;
-    const p=waterStep(pos,pos.cog,16);
-    pos.lat=p.lat;pos.lon=p.lon;pos.cog=p.cog;
+    const now=Date.now();
+    const dt=Math.min(2,(now-last)/1000||0.9);
+    last=now;
+    advanceBoatOnCourse(dt);
     update();
-  },920);
+  },900);
 }
 
 function addPointFromMap(latlng){
@@ -253,7 +284,13 @@ function addPointFromMap(latlng){
   if(!name)return;
   // Manuelle bøyer/start/mål skal ligge nøyaktig der brukeren trykker.
   // Land-/vannjustering brukes kun for anbefalt rute, ikke for selve markøren.
-  if(choice==='1') { marks.unshift({name,lat:latlng.lat,lon:latlng.lng,type}); active=0; }
+  if(choice==='1') {
+    marks.unshift({name,lat:latlng.lat,lon:latlng.lng,type});
+    active=marks.length>1?1:0;
+    // Startpunkt i løypa er også startpunkt for demo-båten.
+    pos={lat:latlng.lat,lon:latlng.lng,sog:ms(+$('simSpeed').value||5.5),cog:+$('simHeading').value||210};
+    fetchData(pos.lat,pos.lon).catch(()=>{});
+  }
   else marks.push({name,lat:latlng.lat,lon:latlng.lng,type});
   save();render();update();
 }
@@ -267,9 +304,16 @@ map.on('moveend zoomend',()=>{if(window._vecTimer)clearTimeout(window._vecTimer)
 $('sim').onclick=async()=>{
   simOn=!simOn;$('sim').textContent=simOn?'Stopp demo':'Start demo-sim';
   if(!simOn){clearInterval(simTimer);return;}
-  pos=pos||nearestWater(59.2025,10.767);
-  pos.sog=ms(+$('simSpeed').value||5.5);pos.cog=+$('simHeading').value||210;
+  if(marks.length){
+    // Demo skal alltid starte fra løypas Start-punkt når løype finnes.
+    pos={lat:marks[0].lat,lon:marks[0].lon,sog:ms(+$('simSpeed').value||5.5),cog:+$('simHeading').value||210};
+    active=marks.length>1?1:0;
+  } else {
+    pos=pos||nearestWater(59.2025,10.767);
+    pos.sog=ms(+$('simSpeed').value||5.5);pos.cog=+$('simHeading').value||210;
+  }
   await fetchData(pos.lat,pos.lon);
+  save();
   startSimLoop();
   update();
 };
@@ -292,7 +336,8 @@ $('setBoatStart').onclick=()=>{
 $('sample').onclick=()=>{
   marks=[{name:'Start',lat:59.2015,lon:10.7663,type:'start'},{name:'Bøye 2',lat:59.2165,lon:10.7705,type:'runding'},{name:'Bunn',lat:59.193,lon:10.792,type:'runding'},{name:'Mål',lat:59.2017,lon:10.767,type:'mål'}].map(m=>{const n=nearestWater(m.lat,m.lon);return{...m,lat:n.lat,lon:n.lon};});
   active=0;
-  pos=nearestWater(59.2015,10.7663);
+  pos={lat:marks[0].lat,lon:marks[0].lon,sog:ms(+$('simSpeed').value||5.5),cog:+$('simHeading').value||210};
+  active=marks.length>1?1:0;
   save();update();
 };
 $('clear').onclick=()=>{if(confirm('Tøm?')){marks=[];active=0;line={pin:null,boat:null};save();render();update();}};
