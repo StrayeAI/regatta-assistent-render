@@ -7,7 +7,7 @@ let pendingBoatStart = false;
 
 const map = L.map('map').setView([59.205, 10.79], 13);
 const layers = L.layerGroup().addTo(map);
-let boatMarker, routeLine, redRouteLine, vectorHud, pressTimer = null;
+let boatMarker, routeLine, redRouteLine, vectorOverlay, pressTimer = null;
 let layLines = [];
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -55,15 +55,20 @@ function dest(lat, lon, brg, m) {
 // Approximate land guard for Hankø demo area. This is not navigation-grade,
 // but it prevents the simulator/recommended demo line from crossing the obvious islands/mainland.
 const landPolygons = [
+  // West mainland / Habbogen-Karlsøykta. Coarse shoreline guard for demo viewport.
+  [[59.1850,10.6900],[59.2360,10.6900],[59.2360,10.7520],[59.2240,10.7480],[59.2180,10.7420],[59.2110,10.7500],[59.2030,10.7460],[59.1980,10.7510],[59.1900,10.7480],[59.1850,10.7350]],
   // Løkholmen
-  [[59.2144,10.7570],[59.2160,10.7620],[59.2151,10.7690],[59.2117,10.7708],[59.2092,10.7650],[59.2105,10.7580]],
-  // Hankø / Hankøsundet land mass near demo route
-  [[59.2200,10.7700],[59.2320,10.7820],[59.2300,10.8050],[59.2160,10.8060],[59.2110,10.7890]],
-  // Mainland east side in the demo viewport
-  [[59.1960,10.8060],[59.2360,10.8050],[59.2360,10.8800],[59.1880,10.8800],[59.1890,10.8250]],
-  // Southern small islands / shore
-  [[59.1900,10.7750],[59.2000,10.7840],[59.1990,10.8030],[59.1880,10.8060],[59.1830,10.7870]]
-];
+  [[59.2169,10.7600],[59.2177,10.7665],[59.2161,10.7735],[59.2122,10.7748],[59.2088,10.7685],[59.2094,10.7604],[59.2125,10.7564]],
+  // Hankø / island north-east
+  [[59.2200,10.7700],[59.2340,10.7790],[59.2330,10.8070],[59.2170,10.8090],[59.2105,10.7900]],
+  // Mainland east / Vikane-Rørvika
+  [[59.1940,10.8050],[59.2360,10.8050],[59.2360,10.8900],[59.1860,10.8900],[59.1860,10.8260]],
+  // Ramseklov / southern island
+  [[59.1890,10.7760],[59.2030,10.7860],[59.2010,10.8060],[59.1880,10.8090],[59.1810,10.7900]],
+  // Small islets in the strait
+  [[59.1998,10.7680],[59.2035,10.7720],[59.2012,10.7775],[59.1975,10.7730]],
+  [[59.2058,10.7905],[59.2100,10.7940],[59.2070,10.8005],[59.2034,10.7960]]
+]
 function xy(p) { return { x: p[1], y: p[0] }; }
 function ccw(a, b, c) { return (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x); }
 function segCross(a, b, c, d) { return ccw(a, c, d) !== ccw(b, c, d) && ccw(a, b, c) !== ccw(a, b, d); }
@@ -82,29 +87,74 @@ function crossesLand(a, b) {
   const A = xy(a), B = xy(b);
   return landPolygons.some(poly => poly.some((p, i) => segCross(A, B, xy(p), xy(poly[(i + 1) % poly.length]))));
 }
-function waterStep(from, course, meters) {
-  const tries = [0, -25, 25, -50, 50, -80, 80, 120, -120, 180];
-  for (const turn of tries) {
-    const c = norm(course + turn);
-    const p = dest(from.lat, from.lon, c, meters);
-    if (!crossesLand([from.lat, from.lon], [p.lat, p.lon])) return { ...p, cog: c };
-  }
-  return { lat: from.lat, lon: from.lon, cog: norm(course + 180) };
-}
-function safeRoutePoints(points) {
-  const out = [points[0]];
-  for (let i = 1; i < points.length; i++) {
-    const a = out[out.length - 1], b = points[i];
-    if (crossesLand(a, b)) {
-      const brg = bearing(a[0], a[1], b[0], b[1]);
-      const d = distance(a[0], a[1], b[0], b[1]);
-      const left = dest(a[0], a[1], norm(brg - 55), Math.min(Math.max(d * .45, 250), 900));
-      const right = dest(a[0], a[1], norm(brg + 55), Math.min(Math.max(d * .45, 250), 900));
-      const lp = [left.lat, left.lon], rp = [right.lat, right.lon];
-      const chosen = (!crossesLand(a, lp) && !crossesLand(lp, b)) ? lp : ((!crossesLand(a, rp) && !crossesLand(rp, b)) ? rp : null);
-      if (chosen) out.push(chosen);
+function nearestWater(lat, lon) {
+  if (!isLand(lat, lon)) return { lat, lon };
+  for (let r = 40; r <= 1200; r += 40) {
+    for (let a = 0; a < 360; a += 15) {
+      const p = dest(lat, lon, a, r);
+      if (!isLand(p.lat, p.lon) && !crossesLand([lat, lon], [p.lat, p.lon])) return p;
+      if (!isLand(p.lat, p.lon)) return p;
     }
-    out.push(b);
+  }
+  return { lat, lon };
+}
+function waterRoute(start, goal) {
+  const a0 = nearestWater(start[0], start[1]), b0 = nearestWater(goal[0], goal[1]);
+  const A = [a0.lat, a0.lon], B = [b0.lat, b0.lon];
+  if (!crossesLand(A, B)) return [A, B];
+  const latMin = Math.min(A[0], B[0]) - 0.012, latMax = Math.max(A[0], B[0]) + 0.012;
+  const lonMin = Math.min(A[1], B[1]) - 0.018, lonMax = Math.max(A[1], B[1]) + 0.018;
+  const n = 26, key = (i, j) => `${i},${j}`;
+  const node = (i, j) => [latMin + (latMax - latMin) * i / n, lonMin + (lonMax - lonMin) * j / n];
+  const walkable = (i, j) => i >= 0 && j >= 0 && i <= n && j <= n && !isLand(...node(i, j));
+  const idx = p => [Math.max(0, Math.min(n, Math.round((p[0] - latMin) / (latMax - latMin) * n))), Math.max(0, Math.min(n, Math.round((p[1] - lonMin) / (lonMax - lonMin) * n)))];
+  let [si, sj] = idx(A), [gi, gj] = idx(B);
+  const nearestIdx = (i0, j0) => {
+    for (let r = 0; r <= n; r++) for (let di = -r; di <= r; di++) for (let dj = -r; dj <= r; dj++) if (Math.max(Math.abs(di), Math.abs(dj)) === r && walkable(i0 + di, j0 + dj)) return [i0 + di, j0 + dj];
+    return [i0, j0];
+  };
+  [si, sj] = nearestIdx(si, sj); [gi, gj] = nearestIdx(gi, gj);
+  const open = [{ i: si, j: sj, f: 0 }], came = new Map(), g = new Map([[key(si, sj), 0]]);
+  const dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+  while (open.length) {
+    open.sort((a,b)=>a.f-b.f);
+    const cur = open.shift(), ck = key(cur.i, cur.j);
+    if (cur.i === gi && cur.j === gj) {
+      const path = [B]; let k = ck;
+      while (came.has(k)) { const [i,j] = k.split(',').map(Number); path.push(node(i,j)); k = came.get(k); }
+      path.push(A); return path.reverse();
+    }
+    for (const [di,dj] of dirs) {
+      const ni = cur.i + di, nj = cur.j + dj;
+      if (!walkable(ni,nj)) continue;
+      const from = node(cur.i, cur.j), to = node(ni, nj);
+      if (crossesLand(from, to)) continue;
+      const nk = key(ni,nj), step = distance(from[0],from[1],to[0],to[1]);
+      const ng = (g.get(ck) || 0) + step;
+      if (ng < (g.get(nk) ?? Infinity)) {
+        came.set(nk, ck); g.set(nk, ng);
+        const h = distance(to[0],to[1],B[0],B[1]); open.push({i:ni,j:nj,f:ng+h});
+      }
+    }
+  }
+  return safeRoutePoints([A, B]);
+}
+function waterStep(from, course, meters) {
+  const start = nearestWater(from.lat, from.lon);
+  const intended = dest(start.lat, start.lon, course, Math.max(meters * 18, 80));
+  const route = waterRoute([start.lat, start.lon], [intended.lat, intended.lon]);
+  const next = route[1] || [intended.lat, intended.lon];
+  const c0 = bearing(start.lat, start.lon, next[0], next[1]);
+  const p = dest(start.lat, start.lon, c0, meters);
+  if (!isLand(p.lat, p.lon) && !crossesLand([start.lat, start.lon], [p.lat, p.lon])) return { ...p, cog: c0 };
+  return { ...start, cog: c0 };
+}
+
+function safeRoutePoints(points) {
+  let out = [points[0]];
+  for (let i = 1; i < points.length; i++) {
+    const seg = waterRoute(out[out.length - 1], points[i]);
+    out = out.concat(seg.slice(1));
   }
   return out;
 }
@@ -124,30 +174,32 @@ function load() {
   render();
 }
 
-function vectorNeedle(course, color) {
-  return `<span class="hudNeedle" style="--rot:${course}deg;--c:${color}">➤</span>`;
+function vectorNeedle(course, color, speed, label) {
+  return `<div class="mapVector ${label}" style="--rot:${course}deg;--c:${color}"><span>➤</span><b>${speed}</b></div>`;
 }
-function ensureVectorHud() {
-  if (vectorHud) return vectorHud;
-  vectorHud = L.control({ position: 'topright' });
-  vectorHud.onAdd = () => {
-    const div = L.DomUtil.create('div', 'vectorHud');
-    L.DomEvent.disableClickPropagation(div);
-    return div;
-  };
-  vectorHud.addTo(map);
-  return vectorHud;
+function ensureVectorOverlay() {
+  if (vectorOverlay) return vectorOverlay;
+  const mapEl = $('map');
+  vectorOverlay = document.createElement('div');
+  vectorOverlay.className = 'vectorOverlay';
+  mapEl.appendChild(vectorOverlay);
+  return vectorOverlay;
 }
 function renderVectors() {
   if (!weather) return;
   const wind = weather.wind || {}, marine = weather.marine || {};
   const windTo = wind.wind_direction_10m == null ? null : norm(wind.wind_direction_10m + 180);
   const curTo = marine.ocean_current_direction == null ? null : Number(marine.ocean_current_direction);
-  const box = ensureVectorHud().getContainer();
-  box.innerHTML = `
-    <div class="hudRow wind">${windTo == null ? '' : vectorNeedle(windTo, '#7dd3fc')}<span>Vind</span><b>${wind.wind_speed_10m == null ? '–' : wind.wind_speed_10m.toFixed(1)} m/s fra ${wind.wind_direction_10m == null ? '–' : Math.round(wind.wind_direction_10m)}°</b></div>
-    <div class="hudRow current">${curTo == null ? '' : vectorNeedle(curTo, '#06d6a0')}<span>Strøm</span><b>${marine.ocean_current_velocity == null ? '–' : marine.ocean_current_velocity.toFixed(2)} m/s mot ${curTo == null ? '–' : Math.round(curTo)}°</b></div>`;
+  const windSpeed = wind.wind_speed_10m == null ? '–' : `${wind.wind_speed_10m.toFixed(1)}m/s`;
+  const curSpeed = marine.ocean_current_velocity == null ? '–' : `${marine.ocean_current_velocity.toFixed(1)}m/s`;
+  const pts = [[18,24],[39,31],[61,24],[27,51],[50,57],[72,49],[19,76],[42,82],[65,74]];
+  ensureVectorOverlay().innerHTML = pts.map((p, i) => `
+    <div class="vectorCell" style="left:${p[0]}%;top:${p[1]}%">
+      ${windTo == null ? '' : vectorNeedle(windTo, '#1d4ed8', windSpeed, 'wind')}
+      ${curTo == null ? '' : vectorNeedle(curTo, '#dc2626', curSpeed, 'current')}
+    </div>`).join('');
 }
+
 
 function render() {
   layers.clearLayers();
@@ -263,7 +315,10 @@ function update() {
 
   const r = route(brg);
   $('leg').textContent = `${active + 1}: ${t.name} (${Math.round(d)} m)`;
-  $('course').textContent = `${Math.round(r.best)}°`;
+  const preview = safeRoutePoints([[pos.lat, pos.lon], [t.lat, t.lon]]);
+  const safeCourse = preview[1] ? bearing(preview[0][0], preview[0][1], preview[1][0], preview[1][1]) : r.best;
+  $('course').textContent = `${Math.round(safeCourse)}°`;
+  r.best = safeCourse;
   $('advice').textContent = `${r.mode}: styr ca. ${Math.round(r.best)}° mot ${t.name}${r.alt ? `, alternativ ${Math.round(r.alt)}°` : ''}.`;
   $('details').textContent = `Peiling ${Math.round(brg)}°, TWA ${Math.round(r.twa)}°, ${r.cur.text}. Fart ${kt(pos.sog).toFixed(1)} kn / kurs ${Math.round(pos.cog || 0)}°.`;
 
@@ -293,11 +348,12 @@ function drawRecommendedRoute(r, target) {
 }
 
 function setBoatStart(lat, lon, keepSimRunning = false) {
-  pos = { lat, lon, sog: ms(+$('simSpeed').value || 5.5), cog: +$('simHeading').value || 210 };
+  const w = nearestWater(lat, lon);
+  pos = { lat: w.lat, lon: w.lon, sog: ms(+$('simSpeed').value || 5.5), cog: +$('simHeading').value || 210 };
   pendingBoatStart = false;
   $('setBoatStart').classList.remove('armed');
   $('setBoatStart').textContent = 'Endre båtens startpunkt';
-  map.setView([lat, lon], Math.max(map.getZoom(), 14));
+  map.setView([pos.lat, pos.lon], Math.max(map.getZoom(), 14));
   fetchData(lat, lon).catch(() => { simWeatherFallback(); $('status').textContent = 'Demo fallback'; }).finally(() => {
     save();
     update();
@@ -365,6 +421,7 @@ $('sim').onclick = async () => {
   clearInterval(simTimer);
   if (!simOn) return;
   pos = pos || { lat: 59.2035, lon: 10.7700, sog: ms(+$('simSpeed').value || 5.5), cog: +$('simHeading').value || 210 };
+  if (isLand(pos.lat, pos.lon)) { const w = nearestWater(pos.lat, pos.lon); pos.lat = w.lat; pos.lon = w.lon; }
   map.setView([pos.lat, pos.lon], 14);
   try { await fetchData(pos.lat, pos.lon); }
   catch (e) { simWeatherFallback(); $('status').textContent = 'Demo fallback'; }
