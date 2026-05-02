@@ -5,7 +5,7 @@ let marks = [], active = 0, pos = null, weather = null, lastFetch = 0;
 let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simTimer = null, vectorOverlay = null;
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
-const APP_VERSION = '2026-05-02-pwa10';
+const APP_VERSION = '2026-05-02-pwa11';
 
 if (localStorage.regattaAppVersion !== APP_VERSION) {
   localStorage.regattaAppVersion = APP_VERSION;
@@ -229,38 +229,45 @@ function safeStepToward(from,target,meters,preferredBrg=null){
   return best || {...nearestWater(from.lat,from.lon),cog:base};
 }
 
+function safeProjection(start,course,maxMeters=850){
+  // Kort anbefalt kurs fremover, ikke en hel rute til bøyen.
+  // Stopper eller bøyer av før land.
+  const pts=[[start.lat,start.lon]];
+  let cur={lat:start.lat,lon:start.lon};
+  const step=70;
+  for(let d=0;d<maxMeters;d+=step){
+    let next=null;
+    for(const off of [0,10,-10,22,-22,40,-40,65,-65,95,-95]){
+      const brg=norm(course+off);
+      const p=dest(cur.lat,cur.lon,brg,step);
+      if(!isLand(p.lat,p.lon)&&!crossesLand([cur.lat,cur.lon],[p.lat,p.lon])){next={...p,cog:brg};break;}
+    }
+    if(!next)break;
+    pts.push([next.lat,next.lon]);
+    cur=next;
+  }
+  return pts.length>1?pts:[[start.lat,start.lon]];
+}
+
 function recommendedRouteTo(target){
   const windFrom=weather?.wind?.wind_direction_10m;
+  const cur=weather?.marine||{};
   const from={lat:pos.lat,lon:pos.lon};
-  const directBrg=bearing(from.lat,from.lon,target.lat,target.lon);
-  const twa=windFrom==null?180:Math.abs(diff(directBrg,windFrom));
+  let directBrg=bearing(from.lat,from.lon,target.lat,target.lon);
 
-  // VIKTIG: anbefalt rød linje må ALDRI tegnes over land.
-  // Først prøver vi land-sikker vannrute direkte.
-  if(twa >= (+$('upwind').value||43)+8){
-    return waterRoute([from.lat,from.lon],[target.lat,target.lon]);
+  // Enkel strømkompensasjon: legg litt mot strømmen sideveis.
+  if(cur.ocean_current_velocity!=null && cur.ocean_current_direction!=null){
+    const side=cur.ocean_current_velocity*Math.sin(rad(diff(cur.ocean_current_direction,directBrg)));
+    directBrg=norm(directBrg+Math.max(-12,Math.min(12,deg(Math.atan2(side,3.0)))));
   }
 
-  // Ved kryss: prøv to korte slag-kandidater, men forkast alt som krysser land.
-  const up=+$('upwind').value||43;
-  const total=distance(from.lat,from.lon,target.lat,target.lon);
-  const candidates=[];
-  for(const tack of [norm(windFrom+up),norm(windFrom-up),norm(windFrom+up+18),norm(windFrom-up-18)]){
-    const mid=dest(from.lat,from.lon,tack,Math.min(650,total*.42));
-    if(isLand(mid.lat,mid.lon)) continue;
-    const leg1=waterRoute([from.lat,from.lon],[mid.lat,mid.lon]);
-    const leg2=waterRoute([mid.lat,mid.lon],[target.lat,target.lon]);
-    const path=leg1.concat(leg2.slice(1));
-    let ok=true, len=0;
-    for(let i=1;i<path.length;i++){
-      if(crossesLand(path[i-1],path[i])){ok=false;break;}
-      len+=distance(path[i-1][0],path[i-1][1],path[i][0],path[i][1]);
-    }
-    if(ok)candidates.push({path,len});
+  let course=directBrg;
+  if(windFrom!=null && Math.abs(diff(course,windFrom)) < (+$('upwind').value||43)+8){
+    const up=+$('upwind').value||43;
+    const tackA=norm(windFrom+up), tackB=norm(windFrom-up);
+    course=Math.abs(diff(tackA,directBrg))<Math.abs(diff(tackB,directBrg))?tackA:tackB;
   }
-  if(candidates.length) return candidates.sort((a,b)=>a.len-b.len)[0].path;
-  // Fallback: ren vannrute, aldri rett over land.
-  return waterRoute([from.lat,from.lon],[target.lat,target.lon]);
+  return safeProjection(from,course,900);
 }
 
 function renderRecommended(){
