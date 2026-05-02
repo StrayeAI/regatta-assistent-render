@@ -7,7 +7,7 @@ let vectorField = [], vectorFetchKey = '', vectorFetchInFlight = false, lastVect
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
 let boatNav = { active: null, route: [], idx: 1, pending: false, source: 'client' };
-const APP_VERSION = '2026-05-02-pwa21';
+const APP_VERSION = '2026-05-02-pwa22';
 const DEFAULT_ROUTE_API_URL = 'https://regatta-route-api.onrender.com';
 const query = new URLSearchParams(location.search);
 const routeApiParam = query.get('routeApi');
@@ -351,13 +351,14 @@ function render(){
 
   if(marks.length>1){
     // Blå løype viser nå faktisk regattarunding: inn-punkt, bue rundt bøya, ut-punkt.
-    const pts=roundedCourseDisplayRoute();
+    const pts=courseDisplayRoute();
     routeLine=L.polyline(pts,{color:'#60a5fa',weight:3.8,opacity:0.95}).addTo(map);
   }
   marks.forEach((m,i)=>{
     const marker=L.marker([m.lat,m.lon]).addTo(map).bindPopup(`${i+1}. ${m.name}`);
     overlays.push(marker);
   });
+  renderMarksTable();
 
   if(line.pin && line.boat){
     const l=L.polyline([[line.pin.lat,line.pin.lon],[line.boat.lat,line.boat.lon]],{color:'#f59e0b',weight:4,opacity:.95}).addTo(map);
@@ -451,14 +452,28 @@ function roundingRouteForIndex(i,fromOverride=null){
   if(i<=0||i>=marks.length-1||marks[i].type!=='runding')return [];
   return arcAroundMark(marks[i], fromOverride||marks[i-1], marks[i+1]);
 }
-function roundedCourseDisplayRoute(){
-  if(marks.length<2)return marks.map(m=>[m.lat,m.lon]);
-  let pts=[[marks[0].lat,marks[0].lon]];
-  for(let i=1;i<marks.length;i++){
-    if(i<marks.length-1 && marks[i].type==='runding') pts=appendRoute(pts,roundingRouteForIndex(i));
-    else pts=appendRoute(pts,[[marks[i].lat,marks[i].lon]]);
-  }
-  return pts;
+function courseDisplayRoute(){
+  // Blå linje skal være den ruten brukeren faktisk la inn: Start → bøyer → Mål.
+  // Båtens interne rundingsbuer holdes separat så kart-ruten ikke ser feil ut.
+  return marks.map(m=>[m.lat,m.lon]);
+}
+function esc(s){ return String(s??'').replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])); }
+function renderMarksTable(){
+  const tbody=$('marks');
+  if(!tbody)return;
+  tbody.innerHTML=marks.map((m,i)=>`<tr><td>${i+1}</td><td>${esc(m.name)}</td><td>${esc(m.type||'')}</td><td><button class="danger" data-del="${i}" aria-label="Slett ${esc(m.name)}">×</button></td></tr>`).join('');
+  tbody.onclick=e=>{
+    const btn=e.target?.closest?.('[data-del]') || (e.target?.dataset?.del!=null?e.target:null);
+    if(btn) deleteMark(Number(btn.dataset.del));
+  };
+}
+function deleteMark(i){
+  if(!Number.isInteger(i)||i<0||i>=marks.length)return;
+  marks.splice(i,1);
+  if(active>i)active--;
+  else if(active>=marks.length)active=Math.max(0,marks.length-1);
+  resetBoatNav();
+  save();render();update();
 }
 function activeRouteTarget(defaultTarget){
   const last=boatNav.route?.[boatNav.route.length-1];

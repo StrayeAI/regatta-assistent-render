@@ -56,8 +56,9 @@ assert.ok(boatNav.route.length >= 7, 'planned rounding route should include mult
 const finalPlanned = boatNav.route[boatNav.route.length - 1];
 assert.ok(distance(finalPlanned[0], finalPlanned[1], marks[1].lat, marks[1].lon) > (+$('radius').value || 60) * 0.65, 'planned rounding should exit away from the buoy, not at the buoy center');
 
-const displayPts = roundedCourseDisplayRoute();
-assert.ok(displayPts.length > marks.length, 'blue course display should show rounded arcs around rounding buoys, not only straight mark-to-mark segments');
+const displayPts = courseDisplayRoute();
+assert.equal(displayPts.length, marks.length, 'blue course display should stay as the user-entered route through marks');
+assert.deepEqual(displayPts[1], [marks[1].lat, marks[1].lon], 'blue route should pass through the actual buoy point');
 
 const track = [{ lat: pos.lat, lon: pos.lon, active }];
 for (let i = 0; i < 1600 && active < 2; i++) {
@@ -97,6 +98,21 @@ for (let i = 2; i < route.length; i++) {
   const next = bearing(route[i - 1][0], route[i - 1][1], route[i][0], route[i][1]);
   assert.ok(Math.abs(diff(next, prev)) < 140, 'boat water route should not contain U-turn/backtracking segments');
 }
+
+marks = [
+  { name: 'Start', lat: 59.180, lon: 10.760, type: 'start' },
+  { name: 'Bøye X', lat: 59.180, lon: 10.790, type: 'runding' },
+  { name: 'Mål', lat: 59.185, lon: 10.850, type: 'mål' }
+];
+active = 2;
+boatNav = { active: 1, route: [[0,0],[1,1]], idx: 1, pending: false, source: 'test' };
+renderMarksTable();
+assert.ok($('marks').innerHTML.includes('data-del="1"'), 'marks table should render an X/delete control for each mark');
+deleteMark(1);
+assert.equal(marks.length, 2, 'deleteMark should remove the selected mark');
+assert.equal(marks[1].name, 'Mål', 'deleteMark should keep remaining mark order');
+assert.equal(active, 1, 'deleteMark should adjust active index when deleting before active mark');
+assert.equal(boatNav.route.length, 0, 'deleteMark should reset planned boat route');
 `;
 
 eval(harness + '\n' + appSource + '\n' + testCode);
