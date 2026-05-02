@@ -5,7 +5,7 @@ let marks = [], active = 0, pos = null, weather = null, lastFetch = 0;
 let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simTimer = null, vectorOverlay = null;
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
-const APP_VERSION = '2026-05-02-pwa3';
+const APP_VERSION = '2026-05-02-pwa4';
 
 if (localStorage.regattaAppVersion !== APP_VERSION) {
   localStorage.regattaAppVersion = APP_VERSION;
@@ -145,9 +145,10 @@ function render(){
   overlays.forEach(o=>o.remove());overlays=[];
 
   if(marks.length>1){
-    let pts=[[marks[0].lat,marks[0].lon]];
-    for(let i=1;i<marks.length;i++) pts=pts.concat(waterRoute(pts[pts.length-1],[marks[i].lat,marks[i].lon]).slice(1));
-    routeLine=L.polyline(pts,{color:'#60a5fa',weight:3.8,opacity:0.9}).addTo(map);
+    // Blå løype = nøyaktig satt bane. Den skal alltid gå gjennom bøyene brukeren har plassert.
+    // Land-/vannrouting brukes bare på rød anbefalt linje, ikke på selve løypa.
+    const pts=marks.map(m=>[m.lat,m.lon]);
+    routeLine=L.polyline(pts,{color:'#60a5fa',weight:3.8,opacity:0.95}).addTo(map);
   }
   marks.forEach((m,i)=>{
     const marker=L.marker([m.lat,m.lon]).addTo(map).bindPopup(`${i+1}. ${m.name}`);
