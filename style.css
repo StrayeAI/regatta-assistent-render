@@ -1,10 +1,237 @@
-:root{--bg:#061826;--card:#102b3d;--line:#214b64;--txt:#eef;--muted:#9bb;--accent:#20a4f3;--ok:#06d6a0;--warn:#ffd166;--bad:#ef476f}*{box-sizing:border-box}body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:var(--bg);color:var(--txt)}header{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#061826e8;backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}h1{font-size:18px;margin:0}#status{font-size:12px;color:var(--muted)}main{padding:8px 12px;padding-bottom:30px}.hero,.buttons{display:flex;gap:8px;flex-wrap:wrap}.mapwrap{height:58vh;min-height:430px;border:1px solid var(--line);border-radius:16px;overflow:hidden;margin:10px 0}#map{height:100%;width:100%}.grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px}.panel,article{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:8px;margin:5px 0;min-height:62px}label{display:block;color:var(--muted);font-size:12px}b{font-size:18px;display:block;line-height:1.1;margin-top:4px}h2{font-size:20px;margin:5px 0 8px}.muted,#details{color:var(--muted);font-size:13px}button,input{font-size:14px;border:0;border-radius:12px;padding:11px}button{background:var(--accent);color:white;font-weight:800}button.secondary{background:#2c4d61}button.danger{background:var(--bad)}.inputs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}input{width:100%;background:#eef;color:#001}table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}td,th{border-bottom:1px solid var(--line);padding:7px;text-align:left}.layline{stroke-dasharray:8 8}@media(max-width:800px){.grid{grid-template-columns:1fr 1fr}.mapwrap{height:55vh;min-height:380px}}@media(max-width:480px){.inputs{grid-template-columns:1fr}.grid{grid-template-columns:1fr 1fr}b{font-size:16px}.mapwrap{height:52vh;min-height:340px}}
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
 
-.boatIcon{font-size:26px;text-align:center;filter:drop-shadow(0 2px 2px #000)}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: .75rem 1rem;
+  background: #0f172a;
+  border-bottom: 1px solid #1e2937;
+}
 
-@media(min-width:1100px){main.pc{display:grid;grid-template-columns:2fr 1fr;gap:10px;align-items:start}.hero,.mapwrap{grid-column:1}.grid,.panel{grid-column:2}.mapwrap{height:72vh;min-height:620px}.grid{grid-template-columns:1fr 1fr}body{overflow-y:auto}}
-.recommendedRoute{stroke-dasharray:7 10;stroke-linecap:round;filter:drop-shadow(0 0 4px #ff1744)}
-button.armed{background:#ef476f;box-shadow:0 0 0 3px #ffd16655}
-.vectorHud{background:#061826e6;border:1px solid #214b64;border-radius:12px;padding:6px 8px;color:#eef;box-shadow:0 4px 18px #0018;min-width:145px;pointer-events:none}
-.hudRow{display:grid;grid-template-columns:22px 42px 1fr;gap:4px;align-items:center;font-size:10px;line-height:1.05;margin:2px 0}.hudRow span{color:#9bb;text-transform:uppercase;letter-spacing:.04em}.hudRow b{font-size:10px;font-weight:800;white-space:nowrap}.hudNeedle{display:inline-block;color:var(--c);font-size:18px;line-height:18px;transform:rotate(var(--rot));transform-origin:center;filter:drop-shadow(0 1px 2px #001)}
-.vectorOverlay{position:absolute;inset:0;z-index:450;pointer-events:none}.vectorCell{position:absolute;transform:translate(-50%,-50%);display:flex;gap:12px;align-items:center}.mapVector{display:flex;align-items:center;gap:2px;font-size:10px;font-weight:800;text-shadow:0 1px 2px #fff,0 -1px 2px #fff}.mapVector span{display:inline-block;color:var(--c);font-size:20px;line-height:16px;transform:rotate(var(--rot));transform-origin:center}.mapVector b{font-size:10px;color:#061826;background:#ffffffbf;border-radius:6px;padding:1px 3px}.mapVector.current span{font-size:17px}.mapVector.current b{font-size:9px}.vectorHud{display:none!important}
+h1 {
+  margin: 0;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+
+#status {
+  padding: .2rem .6rem;
+  border-radius: .375rem;
+  background: #334155;
+  font-size: .75rem;
+  color: #94a3b8;
+}
+
+main.pc {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: .75rem;
+}
+
+button {
+  padding: .5rem .9rem;
+  border-radius: .375rem;
+  border: none;
+  background: #1e40af;
+  color: white;
+  font-size: .9rem;
+  cursor: pointer;
+  margin: .1rem;
+  touch-action: manipulation;
+}
+
+button.secondary {
+  background: #334155;
+}
+
+button.danger {
+  background: #b91c1c;
+}
+
+button.armed {
+  background: #854d0e;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%,100% {opacity:1}
+  50% {opacity:.6}
+}
+
+.mapwrap {
+  position: relative;
+  height: 65vh;
+  min-height: 360px;
+  background: #0f172a;
+  border-radius: .75rem;
+  overflow: hidden;
+  margin-bottom: .75rem;
+}
+
+#map {
+  height: 100%;
+  width: 100%;
+  z-index: 1;
+}
+
+.vectorOverlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 450;
+}
+
+.vectorCell {
+  position: absolute;
+  width: 48px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  cursor: default;
+}
+
+.mapVector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-size: .68rem;
+  font-weight: 600;
+  color: #111;
+  text-shadow: 0 1px 1px #0004;
+  will-change: transform;
+}
+
+.mapVector::before {
+  content: '';
+  width: 4px;
+  height: 15px;
+  background: var(--c, #1d4ed8);
+  border-radius: 999px;
+  transform-origin: center;
+  transform: rotate(var(--rot, 0deg));
+  box-shadow: 0 1px 2px #0006;
+}
+
+.mapVector span {
+  font-size: .65rem;
+  line-height: 1;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2,1fr);
+  gap: .5rem;
+  margin-bottom: .5rem;
+}
+
+.grid article {
+  background: #1e2937;
+  padding: .6rem;
+  border-radius: .5rem;
+}
+
+.grid label {
+  font-size: .7rem;
+  color: #64748b;
+  display: block;
+}
+
+.grid b {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.panel {
+  background: #1e2937;
+  border-radius: .75rem;
+  padding: .75rem;
+  margin-bottom: .6rem;
+}
+
+.panel h2, .panel h3 {
+  margin: .1rem 0 .4rem;
+  font-size: 1.05rem;
+}
+
+#details {
+  font-size: .82rem;
+  color: #94a3b8;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .85rem;
+}
+
+table td, table th {
+  padding: .35rem .4rem;
+  border-bottom: 1px solid #334155;
+}
+
+.inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 1.5rem;
+}
+
+.inputs label {
+  font-size: .85rem;
+}
+
+.inputs input {
+  width: 78px;
+  padding: .3rem;
+  border-radius: .375rem;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+/* Piler inne i kart – IKKER flyttes med kartet nå */
+.mapVector {
+  transition: none;
+}
+
+.boatIcon {
+  filter: drop-shadow(0 1px 2px #0004);
+  font-size: 26px;
+  text-align: center;
+  line-height: 1;
+}
+
+/* Recommended (rød) sti */
+.recommendedRoute {
+  stroke: #ef4444;
+  stroke-opacity: .9;
+  stroke-width: 4.5px;
+  stroke-dasharray: 4 8;
+}
+
+.layline {
+  stroke: #eab308;
+  stroke-opacity: .8;
+  stroke-width: 2;
+}
+
+/* Responsiv */
+@media (max-width: 680px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
