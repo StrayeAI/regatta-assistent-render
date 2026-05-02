@@ -29,7 +29,7 @@ global.L = {
   map(){ return { setView(){ return this; }, getBounds(){ return { getNorth(){ return 59.23; }, getSouth(){ return 59.18; }, getEast(){ return 10.85; }, getWest(){ return 10.72; } }; }, on(){}, getZoom(){ return 13; } }; },
   tileLayer(){ return { addTo(){} }; },
   polyline(pts,opt){ return { pts, opt, addTo(){ return this; }, remove(){} }; },
-  marker(){ return { addTo(){ return this; }, bindPopup(){ return this; }, on(){ return this; }, setLatLng(){}, setIcon(){} }; },
+  marker(){ return { addTo(){ return this; }, bindPopup(){ return this; }, on(){ return this; }, setLatLng(){}, setIcon(){}, remove(){} }; },
   divIcon(x){ return x; }
 };
 global.prompt = () => '2';
@@ -51,6 +51,7 @@ active = 1;
 const track = [];
 for (let i = 0; i < 1800 && active < 3; i++) {
   advanceBoatOnCourse(1);
+  update();
   track.push({ lat: pos.lat, lon: pos.lon, active });
 }
 

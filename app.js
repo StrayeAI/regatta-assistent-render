@@ -6,7 +6,7 @@ let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simT
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
 let boatNav = { active: null, route: [], idx: 1, pending: false, source: 'client' };
-const APP_VERSION = '2026-05-02-pwa17';
+const APP_VERSION = '2026-05-02-pwa18';
 const DEFAULT_ROUTE_API_URL = 'https://regatta-route-api.onrender.com';
 const query = new URLSearchParams(location.search);
 const routeApiParam = query.get('routeApi');
@@ -548,7 +548,7 @@ function update(){
 
   $('advice').textContent=`Følg blå løype mot ${t.name}. Rød stiplet linje viser anbefalt kurs/vei mot neste punkt.`;
   $('details').textContent=`Peiling ${Math.round(brg)}°, avstand ${Math.round(dst)} m. Vind/strøm hentes live fra Open-Meteo.`;
-  if(dst < (+$('radius').value||60) && active < marks.length-1){active++;save();}
+  if(!shouldRoundActiveMark() && dst < (+$('radius').value||60) && active < marks.length-1){active++;resetBoatNav();save();}
   render();
 }
 
