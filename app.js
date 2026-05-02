@@ -5,7 +5,7 @@ let marks = [], active = 0, pos = null, weather = null, lastFetch = 0;
 let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simTimer = null, vectorOverlay = null;
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
-const APP_VERSION = '2026-05-02-pwa6';
+const APP_VERSION = '2026-05-02-pwa7';
 
 if (localStorage.regattaAppVersion !== APP_VERSION) {
   localStorage.regattaAppVersion = APP_VERSION;
@@ -55,7 +55,9 @@ const landPolygons = [
   [[59.1995,10.768],[59.2035,10.7725],[59.201,10.778],[59.1975,10.773]],
   // Kariholmen / små holmer i demo-området
   [[59.2050,10.7640],[59.2125,10.7680],[59.2150,10.7795],[59.2090,10.7860],[59.2020,10.7805],[59.2010,10.7700]],
-  [[59.2130,10.7900],[59.2175,10.7950],[59.2150,10.8025],[59.2095,10.7990]]
+  [[59.2130,10.7900],[59.2175,10.7950],[59.2150,10.8025],[59.2095,10.7990]],
+  // Habbogen vestside / landtunge der demoen tidligere seilte på land
+  [[59.1950,10.6900],[59.2240,10.6900],[59.2240,10.7470],[59.2190,10.7530],[59.2130,10.7510],[59.2070,10.7560],[59.2010,10.7540],[59.1950,10.7440]]
 ];
 
 function isLand(lat,lon){
@@ -180,9 +182,10 @@ function render(){
   overlays.forEach(o=>o.remove());overlays=[];
 
   if(marks.length>1){
-    // Blå løype = nøyaktig satt bane. Den skal alltid gå gjennom bøyene brukeren har plassert.
-    // Land-/vannrouting brukes bare på rød anbefalt linje, ikke på selve løypa.
-    const pts=marks.map(m=>[m.lat,m.lon]);
+    // Blå løype = satt bane via alle bøyene, men hvert legg rutes rundt land.
+    // Bøyene står nøyaktig der brukeren satte dem; linjen mellom dem viser trygg vannvei.
+    let pts=[[marks[0].lat,marks[0].lon]];
+    for(let i=1;i<marks.length;i++) pts=pts.concat(waterRoute(pts[pts.length-1],[marks[i].lat,marks[i].lon]).slice(1));
     routeLine=L.polyline(pts,{color:'#60a5fa',weight:3.8,opacity:0.95}).addTo(map);
   }
   marks.forEach((m,i)=>{
@@ -212,12 +215,30 @@ function boatIcon(){
   return L.divIcon({html:`<div style="transform:rotate(${pos?.cog||0}deg);font-size:26px;line-height:26px;filter:drop-shadow(0 1px 2px #0008)">⛵</div>`,iconSize:[28,28],iconAnchor:[14,14],className:'boatIcon'});
 }
 
+function recommendedRouteTo(target){
+  const directBrg=bearing(pos.lat,pos.lon,target.lat,target.lon);
+  const windFrom=weather?.wind?.wind_direction_10m;
+  if(windFrom==null) return waterRoute([pos.lat,pos.lon],[target.lat,target.lon]);
+  const twa=Math.abs(diff(directBrg,windFrom));
+  // Dersom legget er for nært mot vinden, foreslå slag i sikksakk.
+  if(twa < (+$('upwind').value||43)+8){
+    const total=distance(pos.lat,pos.lon,target.lat,target.lon);
+    const side=norm(directBrg + (diff(windFrom,directBrg)>0 ? 55 : -55));
+    const p1=dest(pos.lat,pos.lon,side,Math.min(550,total*.35));
+    const p2=dest(target.lat,target.lon,norm(side+180),Math.min(550,total*.35));
+    const pts=[[pos.lat,pos.lon],[p1.lat,p1.lon],[p2.lat,p2.lon],[target.lat,target.lon]];
+    let out=[pts[0]];
+    for(let i=1;i<pts.length;i++) out=out.concat(waterRoute(out[out.length-1],pts[i]).slice(1));
+    return out;
+  }
+  return waterRoute([pos.lat,pos.lon],[target.lat,target.lon]);
+}
+
 function renderRecommended(){
   if(redRouteLine){redRouteLine.remove();redRouteLine=null;}
   if(!pos||!marks.length||active>=marks.length)return;
   const t=marks[active];
-  const rt=waterRoute([pos.lat,pos.lon],[t.lat,t.lon]);
-  redRouteLine=L.polyline(rt,{color:'#f87171',weight:4,opacity:0.95,dashArray:'3 6'}).addTo(map);
+  redRouteLine=L.polyline(recommendedRouteTo(t),{color:'#f87171',weight:4,opacity:0.95,dashArray:'3 6'}).addTo(map);
 }
 
 function update(){
@@ -267,40 +288,40 @@ function setBoatStart(lat,lon,keep=false){
 
 function advanceBoatOnCourse(dtSec){
   if(!pos)return;
+  if(isLand(pos.lat,pos.lon)){const w=nearestWater(pos.lat,pos.lon);pos.lat=w.lat;pos.lon=w.lon;}
   const speedMs=ms(+$('simSpeed').value||5.5);
   pos.sog=speedMs;
 
-  // Demo-båten følger bøyene i rekkefølge, men velger trygg vannrute mellom punktene.
-  // Dermed kan blå løype vise satt bane, mens demo ikke kjører over land.
+  // Demo-båten følger trygg blå vannrute fra bøye til bøye.
   if(marks.length){
     if(active <= 0 && distance(pos.lat,pos.lon,marks[0].lat,marks[0].lon) < (+$('radius').value||60) && marks.length>1) active=1;
     const target=marks[Math.min(active,marks.length-1)];
-    const dTarget=distance(pos.lat,pos.lon,target.lat,target.lon);
-    const step=Math.max(0.2,speedMs*dtSec); // knop -> m/s -> meter per tick
+    const step=Math.max(0.2,speedMs*dtSec);
     const safe=waterRoute([pos.lat,pos.lon],[target.lat,target.lon]);
-    const next=safe[1]||[target.lat,target.lon];
-    const dNext=distance(pos.lat,pos.lon,next[0],next[1]);
-    const brg=bearing(pos.lat,pos.lon,next[0],next[1]);
-    pos.cog=brg;
-    if(dTarget <= Math.max(step,(+$('radius').value||60))){
+    let next=safe[1]||[target.lat,target.lon];
+    const dTarget=distance(pos.lat,pos.lon,target.lat,target.lon);
+
+    // Ikke hopp til bøye hvis rett linje til bøyen krysser land — følg rutepunktet først.
+    if(dTarget <= Math.max(step,(+$('radius').value||60)) && !crossesLand([pos.lat,pos.lon],[target.lat,target.lon])){
       pos.lat=target.lat; pos.lon=target.lon;
       if(active < marks.length-1) active++;
-    } else {
-      if(dNext <= step && safe.length > 2){pos.lat=next[0];pos.lon=next[1];}
-      else {
-        const p=dest(pos.lat,pos.lon,brg,Math.min(step,dNext));
-        if(!isLand(p.lat,p.lon)){pos.lat=p.lat;pos.lon=p.lon;}
-        else {const w=nearestWater(p.lat,p.lon);pos.lat=w.lat;pos.lon=w.lon;}
-      }
+      save(); return;
     }
-    save();
-    return;
+
+    let dNext=distance(pos.lat,pos.lon,next[0],next[1]);
+    if(dNext < 2 && safe[2]){next=safe[2];dNext=distance(pos.lat,pos.lon,next[0],next[1]);}
+    const brg=bearing(pos.lat,pos.lon,next[0],next[1]);
+    pos.cog=brg;
+    const p=dest(pos.lat,pos.lon,brg,Math.min(step,dNext));
+    if(!isLand(p.lat,p.lon) && !crossesLand([pos.lat,pos.lon],[p.lat,p.lon])){pos.lat=p.lat;pos.lon=p.lon;}
+    else {const w=nearestWater(pos.lat,pos.lon);pos.lat=w.lat;pos.lon=w.lon;}
+    save();return;
   }
 
-  // Hvis ingen løype er satt, bruk manuell kursinput.
+  // Hvis ingen løype er satt, bruk manuell kursinput, men hold demo på vann.
   pos.cog=+$('simHeading').value||210;
   const p=dest(pos.lat,pos.lon,pos.cog,speedMs*dtSec);
-  pos.lat=p.lat; pos.lon=p.lon;
+  if(!isLand(p.lat,p.lon) && !crossesLand([pos.lat,pos.lon],[p.lat,p.lon])){pos.lat=p.lat;pos.lon=p.lon;}
 }
 
 function startSimLoop(){
