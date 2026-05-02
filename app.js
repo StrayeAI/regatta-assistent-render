@@ -5,7 +5,7 @@ let marks = [], active = 0, pos = null, weather = null, lastFetch = 0;
 let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simTimer = null, vectorOverlay = null;
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
-const APP_VERSION = '2026-05-02-pwa5';
+const APP_VERSION = '2026-05-02-pwa6';
 
 if (localStorage.regattaAppVersion !== APP_VERSION) {
   localStorage.regattaAppVersion = APP_VERSION;
@@ -52,7 +52,10 @@ const landPolygons = [
   [[59.203,10.744],[59.238,10.742],[59.238,10.808],[59.22,10.816],[59.208,10.798],[59.203,10.776]],
   [[59.194,10.805],[59.236,10.805],[59.236,10.89],[59.186,10.89],[59.186,10.826]],
   [[59.189,10.776],[59.203,10.786],[59.201,10.806],[59.188,10.809],[59.181,10.79]],
-  [[59.1995,10.768],[59.2035,10.7725],[59.201,10.778],[59.1975,10.773]]
+  [[59.1995,10.768],[59.2035,10.7725],[59.201,10.778],[59.1975,10.773]],
+  // Kariholmen / små holmer i demo-området
+  [[59.2050,10.7640],[59.2125,10.7680],[59.2150,10.7795],[59.2090,10.7860],[59.2020,10.7805],[59.2010,10.7700]],
+  [[59.2130,10.7900],[59.2175,10.7950],[59.2150,10.8025],[59.2095,10.7990]]
 ];
 
 function isLand(lat,lon){
@@ -77,10 +80,45 @@ function nearestWater(lat,lon){
   return dest(lat,lon,180,80);
 }
 
+function xy(p){return {x:p[1],y:p[0]};}
+function ccw(a,b,c){return (c.y-a.y)*(b.x-a.x)>(b.y-a.y)*(c.x-a.x);}
+function segCross(a,b,c,d){return ccw(a,c,d)!==ccw(b,c,d)&&ccw(a,b,c)!==ccw(a,b,d);}
+function crossesLand(a,b){
+  if(isLand(a[0],a[1])||isLand(b[0],b[1]))return true;
+  const A=xy(a),B=xy(b);
+  return landPolygons.some(poly=>poly.some((p,i)=>segCross(A,B,xy(p),xy(poly[(i+1)%poly.length]))));
+}
 function waterRoute(a,b){
-  const start=nearestWater(a[0],a[1]),goal=nearestWater(b[0],b[1]);
-  if (!isLand(start.lat,start.lon) && !isLand(goal.lat,goal.lon) && !isLand((start.lat+goal.lat)/2,(start.lon+goal.lon)/2)) return [a,goal ? [goal.lat,goal.lon] : b];
-  return [a,[start.lat+(goal.lat-start.lat)*0.6, start.lon+(goal.lon-start.lon)*0.6],b];
+  const s=nearestWater(a[0],a[1]),g=nearestWater(b[0],b[1]);
+  const A=[s.lat,s.lon],B=[g.lat,g.lon];
+  if(!crossesLand(A,B))return [A,B];
+
+  const latMin=Math.min(A[0],B[0])-.018,latMax=Math.max(A[0],B[0])+.018;
+  const lonMin=Math.min(A[1],B[1])-.026,lonMax=Math.max(A[1],B[1])+.026;
+  const n=32,key=(i,j)=>`${i},${j}`;
+  const node=(i,j)=>[latMin+(latMax-latMin)*i/n,lonMin+(lonMax-lonMin)*j/n];
+  const walk=(i,j)=>i>=0&&j>=0&&i<=n&&j<=n&&!isLand(...node(i,j));
+  const idx=p=>[Math.max(0,Math.min(n,Math.round((p[0]-latMin)/(latMax-latMin)*n))),Math.max(0,Math.min(n,Math.round((p[1]-lonMin)/(lonMax-lonMin)*n)))];
+  const nearestIdx=(i0,j0)=>{for(let r=0;r<=n;r++)for(let di=-r;di<=r;di++)for(let dj=-r;dj<=r;dj++)if(Math.max(Math.abs(di),Math.abs(dj))===r&&walk(i0+di,j0+dj))return[i0+di,j0+dj];return[i0,j0];};
+  let [si,sj]=nearestIdx(...idx(A)),[gi,gj]=nearestIdx(...idx(B));
+  const open=[{i:si,j:sj,f:0}],came=new Map(),distG=new Map([[key(si,sj),0]]);
+  const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+  while(open.length){
+    open.sort((x,y)=>x.f-y.f);
+    const cur=open.shift(),ck=key(cur.i,cur.j);
+    if(cur.i===gi&&cur.j===gj){
+      const path=[B];let k=ck;
+      while(came.has(k)){const [i,j]=k.split(',').map(Number);path.push(node(i,j));k=came.get(k);}
+      path.push(A);return path.reverse();
+    }
+    for(const [di,dj] of dirs){
+      const ni=cur.i+di,nj=cur.j+dj;if(!walk(ni,nj))continue;
+      const from=node(cur.i,cur.j),to=node(ni,nj);if(crossesLand(from,to))continue;
+      const nk=key(ni,nj),ng=(distG.get(ck)||0)+distance(from[0],from[1],to[0],to[1]);
+      if(ng<(distG.get(nk)??Infinity)){came.set(nk,ck);distG.set(nk,ng);open.push({i:ni,j:nj,f:ng+distance(to[0],to[1],B[0],B[1])});}
+    }
+  }
+  return [A,B];
 }
 
 function waterStep(from,course,meters){
@@ -101,8 +139,10 @@ function renderVectors(){
   const w=weather.wind||{},c=weather.marine||{};
   const windTo = w.wind_direction_10m ? norm(w.wind_direction_10m+180):210;
   const curTo = c.ocean_current_direction??86;
+  const waveTo = c.wave_direction??windTo;
   const wSpeed = w.wind_speed_10m ? w.wind_speed_10m.toFixed(0):'4.7';
   const cSpeed = c.ocean_current_velocity ? c.ocean_current_velocity.toFixed(1):'0.6';
+  const waveH = c.wave_height ? c.wave_height.toFixed(1):'0.4';
 
   if(!vectorOverlay){
     vectorOverlay=document.createElement('div');
@@ -115,8 +155,8 @@ function renderVectors(){
   vectorOverlay.innerHTML='';
   const bounds=map.getBounds(),latSpan=bounds.getNorth()-bounds.getSouth(),lonSpan=bounds.getEast()-bounds.getWest();
   
-  // helt fast grid (prosent basert) - KUN 5 piler
-  const positions=[[28,38],[47,25],[63,48],[33,69],[55,76]];
+  // Fast skjerm-grid. Ikke Leaflet-markører, så de følger ikke kartpanorering.
+  const positions=[[18,26],[36,22],[56,25],[74,30],[25,47],[47,46],[68,52],[17,70],[39,73],[61,76],[80,68]];
   
   positions.forEach(([px,py],i)=>{
     if(px<3||px>95||py<4||py>92)return;
@@ -125,17 +165,12 @@ function renderVectors(){
     if(isLand(lat,lon))return;
 
     const cell=document.createElement('div');
-    cell.style.cssText=`position:absolute;left:${px}%;top:${py}%;transform:translate(-50%,-50%);width:47px;height:39px;flex-direction:column;align-items:center;pointer-events:none;`;
-    
-    cell.innerHTML=`
-      <div style="width:100%;height:20px;display:flex;align-items:center;justify-content:space-between;margin-bottom:1px">
-        <span style="color:#1e40af;font-size:17px;line-height:1;font-weight:800;transform:rotate(${windTo}deg)">↗</span>
-        <span style="color:#1e40af;font-size:10.4px;font-weight:700">${wSpeed}</span>
-      </div>
-      <div style="width:100%;height:16px;display:flex;align-items:center;justify-content:space-between">
-        <span style="color:#b91c1c;font-size:16px;line-height:1;font-weight:800;transform:rotate(${curTo}deg)">↗</span>
-        <span style="color:#b91c1c;font-size:10.4px;font-weight:700">${cSpeed}</span>
+    cell.style.cssText=`position:absolute;left:${px}%;top:${py}%;transform:translate(-50%,-50%);width:54px;height:55px;display:flex;flex-direction:column;align-items:center;pointer-events:none;`;
+    const row=(color,dir,val)=>`<div style="width:100%;height:17px;display:flex;align-items:center;justify-content:space-between;text-shadow:0 1px 1px #fff9">
+        <span style="color:${color};font-size:16px;line-height:1;font-weight:900;display:inline-block;transform:rotate(${dir}deg)">➜</span>
+        <span style="color:${color};font-size:10px;font-weight:800">${val}</span>
       </div>`;
+    cell.innerHTML=`${row('#dc2626',windTo,wSpeed)}${row('#16a34a',curTo,cSpeed)}${row('#2563eb',waveTo,waveH)}`;
     vectorOverlay.appendChild(cell);
   });
 }
@@ -196,7 +231,7 @@ function update(){
   
   const w=weather.wind||{},c=weather.marine||{};
   $('wind').textContent=`${(w.wind_speed_10m||4.7).toFixed(1)} m/s fra ${Math.round(w.wind_direction_10m||177)}°`;
-  $('sea').textContent=`${c.ocean_current_velocity? c.ocean_current_velocity.toFixed(1)+' m/s':'–'} / ${(c.wave_height||0.4).toFixed(1)} m`;
+  $('sea').textContent=`strøm ${c.ocean_current_velocity? c.ocean_current_velocity.toFixed(1)+' m/s':'–'} / bølge ${(c.wave_height||0.4).toFixed(1)} m`;
 
   $('advice').textContent=`Følg blå løype mot ${t.name}. Rød stiplet linje viser anbefalt kurs/vei mot neste punkt.`;
   $('details').textContent=`Peiling ${Math.round(brg)}°, avstand ${Math.round(dst)} m. Vind/strøm hentes live fra Open-Meteo.`;
@@ -235,20 +270,28 @@ function advanceBoatOnCourse(dtSec){
   const speedMs=ms(+$('simSpeed').value||5.5);
   pos.sog=speedMs;
 
-  // Demo-båten skal følge blå løype i rekkefølge, ikke den røde anbefalte linjen.
+  // Demo-båten følger bøyene i rekkefølge, men velger trygg vannrute mellom punktene.
+  // Dermed kan blå løype vise satt bane, mens demo ikke kjører over land.
   if(marks.length){
     if(active <= 0 && distance(pos.lat,pos.lon,marks[0].lat,marks[0].lon) < (+$('radius').value||60) && marks.length>1) active=1;
     const target=marks[Math.min(active,marks.length-1)];
-    const d=distance(pos.lat,pos.lon,target.lat,target.lon);
-    const step=Math.max(0.2,speedMs*dtSec); // realistisk kartfart: knop -> m/s -> meter per tick
-    const brg=bearing(pos.lat,pos.lon,target.lat,target.lon);
+    const dTarget=distance(pos.lat,pos.lon,target.lat,target.lon);
+    const step=Math.max(0.2,speedMs*dtSec); // knop -> m/s -> meter per tick
+    const safe=waterRoute([pos.lat,pos.lon],[target.lat,target.lon]);
+    const next=safe[1]||[target.lat,target.lon];
+    const dNext=distance(pos.lat,pos.lon,next[0],next[1]);
+    const brg=bearing(pos.lat,pos.lon,next[0],next[1]);
     pos.cog=brg;
-    if(d <= Math.max(step,(+$('radius').value||60))){
+    if(dTarget <= Math.max(step,(+$('radius').value||60))){
       pos.lat=target.lat; pos.lon=target.lon;
       if(active < marks.length-1) active++;
     } else {
-      const p=dest(pos.lat,pos.lon,brg,step);
-      pos.lat=p.lat; pos.lon=p.lon;
+      if(dNext <= step && safe.length > 2){pos.lat=next[0];pos.lon=next[1];}
+      else {
+        const p=dest(pos.lat,pos.lon,brg,Math.min(step,dNext));
+        if(!isLand(p.lat,p.lon)){pos.lat=p.lat;pos.lon=p.lon;}
+        else {const w=nearestWater(p.lat,p.lon);pos.lat=w.lat;pos.lon=w.lon;}
+      }
     }
     save();
     return;
