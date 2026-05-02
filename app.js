@@ -5,7 +5,7 @@ let marks = [], active = 0, pos = null, weather = null, lastFetch = 0;
 let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simTimer = null, vectorOverlay = null;
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
-const APP_VERSION = '2026-05-02-pwa9';
+const APP_VERSION = '2026-05-02-pwa10';
 
 if (localStorage.regattaAppVersion !== APP_VERSION) {
   localStorage.regattaAppVersion = APP_VERSION;
@@ -231,22 +231,36 @@ function safeStepToward(from,target,meters,preferredBrg=null){
 
 function recommendedRouteTo(target){
   const windFrom=weather?.wind?.wind_direction_10m;
-  let cur={lat:pos.lat,lon:pos.lon};
-  const out=[[cur.lat,cur.lon]];
-  for(let i=0;i<70;i++){
-    const d=distance(cur.lat,cur.lon,target.lat,target.lon);
-    if(d<45){out.push([target.lat,target.lon]);break;}
-    let brg=bearing(cur.lat,cur.lon,target.lat,target.lon);
-    // Hvis rett kurs er for nært mot vinden: foreslå slag, men lokalt og uten store looper.
-    if(windFrom!=null && Math.abs(diff(brg,windFrom)) < (+$('upwind').value||43)+8){
-      const tackA=norm(windFrom+(+$('upwind').value||43));
-      const tackB=norm(windFrom-(+$('upwind').value||43));
-      brg=Math.abs(diff(tackA,brg))<Math.abs(diff(tackB,brg))?tackA:tackB;
-    }
-    cur=safeStepToward(cur,target,Math.min(90,d),brg);
-    out.push([cur.lat,cur.lon]);
+  const from={lat:pos.lat,lon:pos.lon};
+  const directBrg=bearing(from.lat,from.lon,target.lat,target.lon);
+  const twa=windFrom==null?180:Math.abs(diff(directBrg,windFrom));
+
+  // VIKTIG: anbefalt rød linje må ALDRI tegnes over land.
+  // Først prøver vi land-sikker vannrute direkte.
+  if(twa >= (+$('upwind').value||43)+8){
+    return waterRoute([from.lat,from.lon],[target.lat,target.lon]);
   }
-  return out;
+
+  // Ved kryss: prøv to korte slag-kandidater, men forkast alt som krysser land.
+  const up=+$('upwind').value||43;
+  const total=distance(from.lat,from.lon,target.lat,target.lon);
+  const candidates=[];
+  for(const tack of [norm(windFrom+up),norm(windFrom-up),norm(windFrom+up+18),norm(windFrom-up-18)]){
+    const mid=dest(from.lat,from.lon,tack,Math.min(650,total*.42));
+    if(isLand(mid.lat,mid.lon)) continue;
+    const leg1=waterRoute([from.lat,from.lon],[mid.lat,mid.lon]);
+    const leg2=waterRoute([mid.lat,mid.lon],[target.lat,target.lon]);
+    const path=leg1.concat(leg2.slice(1));
+    let ok=true, len=0;
+    for(let i=1;i<path.length;i++){
+      if(crossesLand(path[i-1],path[i])){ok=false;break;}
+      len+=distance(path[i-1][0],path[i-1][1],path[i][0],path[i][1]);
+    }
+    if(ok)candidates.push({path,len});
+  }
+  if(candidates.length) return candidates.sort((a,b)=>a.len-b.len)[0].path;
+  // Fallback: ren vannrute, aldri rett over land.
+  return waterRoute([from.lat,from.lon],[target.lat,target.lon]);
 }
 
 function renderRecommended(){
