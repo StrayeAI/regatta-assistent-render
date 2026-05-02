@@ -5,6 +5,12 @@ let marks = [], active = 0, pos = null, weather = null, lastFetch = 0;
 let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simTimer = null, vectorOverlay = null;
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
+const APP_VERSION = '2026-05-02-pwa3';
+
+if (localStorage.regattaAppVersion !== APP_VERSION) {
+  localStorage.regattaAppVersion = APP_VERSION;
+  if ('caches' in window) caches.keys().then(keys => keys.forEach(k => caches.delete(k))).catch(()=>{});
+}
 
 const map = L.map('map', { zoomControl: true }).setView([59.205, 10.79], 13);
 
@@ -214,8 +220,7 @@ function simWeatherFallback(){
 }
 
 function setBoatStart(lat,lon,keep=false){
-  const nw=nearestWater(lat,lon);
-  pos={lat:nw.lat,lon:nw.lon,sog:ms(+$('simSpeed').value||5.5),cog:+$('simHeading').value||210};
+  pos={lat,lon,sog:ms(+$('simSpeed').value||5.5),cog:+$('simHeading').value||210};
   pendingBoatStart=false;
   $('setBoatStart').classList.remove('armed');
   $('setBoatStart').textContent='Endre båtens startpunkt';
@@ -245,9 +250,10 @@ function addPointFromMap(latlng){
   const type=choice==='1'?'start':choice==='3'?'mål':'runding';
   const name=choice==='1'?'Start':choice==='3'?'Mål':prompt('Navn på rundingsbøye:',`Bøye ${marks.length+1}`);
   if(!name)return;
-  const nw=nearestWater(latlng.lat,latlng.lng);
-  if(choice==='1') { marks.unshift({name,lat:nw.lat,lon:nw.lon,type}); active=0; }
-  else marks.push({name,lat:nw.lat,lon:nw.lon,type});
+  // Manuelle bøyer/start/mål skal ligge nøyaktig der brukeren trykker.
+  // Land-/vannjustering brukes kun for anbefalt rute, ikke for selve markøren.
+  if(choice==='1') { marks.unshift({name,lat:latlng.lat,lon:latlng.lng,type}); active=0; }
+  else marks.push({name,lat:latlng.lat,lon:latlng.lng,type});
   save();render();update();
 }
 
@@ -289,7 +295,7 @@ $('sample').onclick=()=>{
   save();update();
 };
 $('clear').onclick=()=>{if(confirm('Tøm?')){marks=[];active=0;line={pin:null,boat:null};save();render();update();}};
-$('useHere').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');const nw=nearestWater(pos.lat,pos.lon);marks.push({name:`Merke ${marks.length+1}`,lat:nw.lat,lon:nw.lon,type:'merke'});save();render();update();};
+$('useHere').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');marks.push({name:`Merke ${marks.length+1}`,lat:pos.lat,lon:pos.lon,type:'merke'});save();render();update();};
 $('setPin').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');line.pin={lat:pos.lat,lon:pos.lon};save();render();};
 $('setBoat').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');line.boat={lat:pos.lat,lon:pos.lon};save();render();};
 
