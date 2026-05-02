@@ -48,7 +48,11 @@ marks = [
 pos = { lat: marks[0].lat, lon: marks[0].lon, sog: ms(5.5), cog: 210 };
 active = 1;
 
-const track = [];
+advanceBoatOnCourse(1);
+update();
+assert.notEqual(boatNav.rounding, true, 'boat should not start the buoy-rounding arc while still far away from the rounding mark');
+
+const track = [{ lat: pos.lat, lon: pos.lon, active }];
 for (let i = 0; i < 1800 && active < 3; i++) {
   advanceBoatOnCourse(1);
   update();

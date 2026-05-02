@@ -7,7 +7,7 @@ let vectorField = [], vectorFetchKey = '', vectorFetchInFlight = false, lastVect
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
 let boatNav = { active: null, route: [], idx: 1, pending: false, source: 'client' };
-const APP_VERSION = '2026-05-02-pwa19';
+const APP_VERSION = '2026-05-02-pwa20';
 const DEFAULT_ROUTE_API_URL = 'https://regatta-route-api.onrender.com';
 const query = new URLSearchParams(location.search);
 const routeApiParam = query.get('routeApi');
@@ -498,17 +498,18 @@ function requestServerBoatRoute(target,extraRoute=[],rounding=false){
 
 function planBoatRouteToActive(){
   if(!pos||!marks.length||active>=marks.length)return null;
-  let target=navTargetForMark(marks[active]);
-  let extraRoute=[],rounding=false;
-  if(shouldRoundActiveMark()){
-    extraRoute=arcAroundMark(marks[active],pos,marks[active+1]);
-    target=routePointObj(extraRoute[0]);
-    rounding=true;
-  }
-  if(ROUTE_API_URL){requestServerBoatRoute(target,extraRoute,rounding);return activeRouteTarget(target);}
-  const route=appendRoute(waterRoute([pos.lat,pos.lon],[target.lat,target.lon]),extraRoute);
-  boatNav={active,route,idx:1,pending:false,source:'client',rounding};
-  return activeRouteTarget(target);
+  const target=navTargetForMark(marks[active]);
+  if(ROUTE_API_URL){requestServerBoatRoute(target,[],false);return target;}
+  const route=waterRoute([pos.lat,pos.lon],[target.lat,target.lon]);
+  boatNav={active,route,idx:1,pending:false,source:'client',rounding:false};
+  return target;
+}
+
+function startRoundingActiveMark(){
+  if(!shouldRoundActiveMark()||!pos)return false;
+  const arc=arcAroundMark(marks[active],pos,marks[active+1]);
+  boatNav={active,route:appendRoute([[pos.lat,pos.lon]],arc),idx:1,pending:false,source:'rounding-arc',rounding:true};
+  return true;
 }
 
 function currentBoatWaypoint(target){
@@ -647,6 +648,10 @@ function advanceBoatOnCourse(dtSec){
     const step=Math.max(0.2,speedMs*dtSec);
     const dTarget=distance(pos.lat,pos.lon,target.lat,target.lon);
     const dMark=distance(pos.lat,pos.lon,targetMark.lat,targetMark.lon);
+
+    if(rounding && !boatNav.rounding && Math.min(dTarget,dMark) <= Math.max(step,radius*1.15)){
+      startRoundingActiveMark();
+    }
 
     if(!rounding && Math.min(dTarget,dMark) <= Math.max(step,radius)){
       // Marker bøyen som rundet når vi er innen passering, men flytt ikke båten inn på land.
