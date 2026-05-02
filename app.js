@@ -136,11 +136,11 @@ function renderVectors(){
 
 function render(){
   if(routeLine){routeLine.remove();routeLine=null;}
-  if(redRouteLine){redRouteLine.remove();redRouteLine=null;}
   overlays.forEach(o=>o.remove());overlays=[];
 
   if(marks.length>1){
-    const pts=waterRoute(marks[0]?[marks[0].lat,marks[0].lon]:[59.2,10.77],marks[marks.length-1]?[marks[marks.length-1].lat,marks[marks.length-1].lon]:[59.2,10.77]);
+    let pts=[[marks[0].lat,marks[0].lon]];
+    for(let i=1;i<marks.length;i++) pts=pts.concat(waterRoute(pts[pts.length-1],[marks[i].lat,marks[i].lon]).slice(1));
     routeLine=L.polyline(pts,{color:'#60a5fa',weight:3.8,opacity:0.9}).addTo(map);
   }
   marks.forEach((m,i)=>{
@@ -148,12 +148,34 @@ function render(){
     overlays.push(marker);
   });
 
+  if(line.pin && line.boat){
+    const l=L.polyline([[line.pin.lat,line.pin.lon],[line.boat.lat,line.boat.lon]],{color:'#f59e0b',weight:4,opacity:.95}).addTo(map);
+    overlays.push(l);
+    $('startline').textContent='Startlinje satt.';
+  } else $('startline').textContent='Ingen startlinje satt.';
+
   if(pos){
-    if(!boatMarker)boatMarker=L.marker([pos.lat,pos.lon],{icon: L.divIcon({html:`<div style="transform:rotate(${pos.cog||0}deg);font-size:26px;">⛵</div>`,iconSize:[28,28],iconAnchor:[14,14]}),draggable:true}).addTo(map);
+    if(!boatMarker){
+      boatMarker=L.marker([pos.lat,pos.lon],{icon: boatIcon(),draggable:true}).addTo(map).bindPopup('Never 2 late');
+      boatMarker.on('dragend',e=>{const ll=e.target.getLatLng();setBoatStart(ll.lat,ll.lng,true);});
+    }
     boatMarker.setLatLng([pos.lat,pos.lon]);
-    overlays.push(boatMarker);
+    boatMarker.setIcon(boatIcon());
   }
+  renderRecommended();
   renderVectors();
+}
+
+function boatIcon(){
+  return L.divIcon({html:`<div style="transform:rotate(${pos?.cog||0}deg);font-size:26px;line-height:26px;filter:drop-shadow(0 1px 2px #0008)">⛵</div>`,iconSize:[28,28],iconAnchor:[14,14],className:'boatIcon'});
+}
+
+function renderRecommended(){
+  if(redRouteLine){redRouteLine.remove();redRouteLine=null;}
+  if(!pos||!marks.length||active>=marks.length)return;
+  const t=marks[active];
+  const rt=waterRoute([pos.lat,pos.lon],[t.lat,t.lon]);
+  redRouteLine=L.polyline(rt,{color:'#f87171',weight:4,opacity:0.95,dashArray:'3 6'}).addTo(map);
 }
 
 function update(){
@@ -169,13 +191,10 @@ function update(){
   $('wind').textContent=`${(w.wind_speed_10m||4.7).toFixed(1)} m/s fra ${Math.round(w.wind_direction_10m||177)}°`;
   $('sea').textContent=`${c.ocean_current_velocity? c.ocean_current_velocity.toFixed(1)+' m/s':'–'} / ${(c.wave_height||0.4).toFixed(1)} m`;
 
-  // RØD ANBEFALT LINJE – bruker waterRoute
-  if(redRouteLine)redRouteLine.remove();
-  const rt = waterRoute([pos.lat,pos.lon],[t.lat,t.lon]);
-  redRouteLine = L.polyline(rt, {color:'#f87171',weight:4,opacity:0.95,dashArray:'3 6'}).addTo(map);
-  
+  $('advice').textContent=`Følg blå løype mot ${t.name}. Rød stiplet linje viser anbefalt kurs/vei mot neste punkt.`;
+  $('details').textContent=`Peiling ${Math.round(brg)}°, avstand ${Math.round(dst)} m. Vind/strøm hentes live fra Open-Meteo.`;
+  if(dst < (+$('radius').value||60) && active < marks.length-1){active++;save();}
   render();
-  renderVectors();
 }
 
 async function fetchData(lat,lon){
@@ -217,6 +236,24 @@ function startSimLoop(){
   },920);
 }
 
+function addPointFromMap(latlng){
+  if(pendingBoatStart)return setBoatStart(latlng.lat,latlng.lng);
+  const choice=prompt('Legg til punkt:\n1 = Start\n2 = Rundingsbøye\n3 = Mål\n4 = Startlinje pinne\n5 = Startlinje bøye\n6 = Flytt båt/startpunkt','2');
+  if(choice==='6')return setBoatStart(latlng.lat,latlng.lng);
+  if(choice==='4'){line.pin={lat:latlng.lat,lon:latlng.lng};save();render();return;}
+  if(choice==='5'){line.boat={lat:latlng.lat,lon:latlng.lng};save();render();return;}
+  const type=choice==='1'?'start':choice==='3'?'mål':'runding';
+  const name=choice==='1'?'Start':choice==='3'?'Mål':prompt('Navn på rundingsbøye:',`Bøye ${marks.length+1}`);
+  if(!name)return;
+  const nw=nearestWater(latlng.lat,latlng.lng);
+  if(choice==='1') { marks.unshift({name,lat:nw.lat,lon:nw.lon,type}); active=0; }
+  else marks.push({name,lat:nw.lat,lon:nw.lon,type});
+  save();render();update();
+}
+
+let pressTimer=null;
+map.on('mousedown touchstart',e=>{clearTimeout(pressTimer);pressTimer=setTimeout(()=>addPointFromMap(e.latlng),650);});
+map.on('mouseup mouseout touchend touchcancel dragstart move',()=>clearTimeout(pressTimer));
 map.on('click',e=>{if(pendingBoatStart)setBoatStart(e.latlng.lat,e.latlng.lng);});
 map.on('moveend zoomend',()=>{if(window._vecTimer)clearTimeout(window._vecTimer);window._vecTimer=setTimeout(renderVectors,220);});
 
@@ -251,8 +288,12 @@ $('sample').onclick=()=>{
   pos=nearestWater(59.2015,10.7663);
   save();update();
 };
-$('clear').onclick=()=>{if(confirm('Tøm?')){marks=[];active=0;line={};save();update();}};
+$('clear').onclick=()=>{if(confirm('Tøm?')){marks=[];active=0;line={pin:null,boat:null};save();render();update();}};
+$('useHere').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');const nw=nearestWater(pos.lat,pos.lon);marks.push({name:`Merke ${marks.length+1}`,lat:nw.lat,lon:nw.lon,type:'merke'});save();render();update();};
+$('setPin').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');line.pin={lat:pos.lat,lon:pos.lon};save();render();};
+$('setBoat').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');line.boat={lat:pos.lat,lon:pos.lon};save();render();};
 
 load();
+render();
 if(!weather)simWeatherFallback();
 setTimeout(()=>{if(pos)update();},800);
