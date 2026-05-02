@@ -48,10 +48,22 @@ marks = [
 pos = { lat: marks[0].lat, lon: marks[0].lon, sog: ms(5.5), cog: 210 };
 active = 1;
 
-for (let i = 0; i < 1800 && active < 3; i++) advanceBoatOnCourse(1);
+const track = [];
+for (let i = 0; i < 1800 && active < 3; i++) {
+  advanceBoatOnCourse(1);
+  track.push({ lat: pos.lat, lon: pos.lon, active });
+}
 
 assert.ok(active >= 3, 'demo boat should round the second buoy and continue toward the next mark instead of oscillating near land');
 assert.ok(!isLand(pos.lat, pos.lon), 'demo boat should remain on water');
+
+const buoy = marks[1];
+const nearBuoyAngles = track
+  .filter(p => distance(p.lat, p.lon, buoy.lat, buoy.lon) < (+$('radius').value || 60) * 1.35)
+  .map(p => bearing(buoy.lat, buoy.lon, p.lat, p.lon));
+let maxSweep = 0;
+for (const a of nearBuoyAngles) for (const b of nearBuoyAngles) maxSweep = Math.max(maxSweep, Math.abs(diff(a, b)));
+assert.ok(nearBuoyAngles.length >= 4 && maxSweep >= 100, 'demo boat should visibly sail around the rounding buoy before continuing');
 
 let target = marks[Math.min(active, marks.length - 1)];
 const red = recommendedRouteTo(target);

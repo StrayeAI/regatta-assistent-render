@@ -6,7 +6,7 @@ let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simT
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
 let boatNav = { active: null, route: [], idx: 1, pending: false, source: 'client' };
-const APP_VERSION = '2026-05-02-pwa16';
+const APP_VERSION = '2026-05-02-pwa17';
 const DEFAULT_ROUTE_API_URL = 'https://regatta-route-api.onrender.com';
 const query = new URLSearchParams(location.search);
 const routeApiParam = query.get('routeApi');
@@ -254,12 +254,14 @@ function load(){try{const s=JSON.parse(localStorage.regattaV2||'{}');marks=s.mar
 function renderVectors(){
   if(!weather) return;
   const w=weather.wind||{},c=weather.marine||{};
-  const windTo = w.wind_direction_10m ? norm(w.wind_direction_10m+180):210;
+  const windFrom = w.wind_direction_10m ?? 177;
+  const windTo = norm(windFrom+180);
   const curTo = c.ocean_current_direction??86;
   const waveTo = c.wave_direction??windTo;
-  const wSpeed = w.wind_speed_10m ? w.wind_speed_10m.toFixed(0):'4.7';
-  const cSpeed = c.ocean_current_velocity ? c.ocean_current_velocity.toFixed(1):'0.6';
-  const waveH = c.wave_height ? c.wave_height.toFixed(1):'0.4';
+  const wSpeed = (w.wind_speed_10m ?? 4.7).toFixed(1);
+  const cSpeed = (c.ocean_current_velocity ?? 0.6).toFixed(1);
+  const waveH = (c.wave_height ?? 0.4).toFixed(1);
+  const windDeg = windFrom.toFixed(0);
 
   if(!vectorOverlay){
     vectorOverlay=document.createElement('div');
@@ -282,12 +284,12 @@ function renderVectors(){
     if(isLand(lat,lon))return;
 
     const cell=document.createElement('div');
-    cell.style.cssText=`position:absolute;left:${px}%;top:${py}%;transform:translate(-50%,-50%);width:54px;height:55px;display:flex;flex-direction:column;align-items:center;pointer-events:none;`;
-    const row=(color,dir,val)=>`<div style="width:100%;height:17px;display:flex;align-items:center;justify-content:space-between;text-shadow:0 1px 1px #fff9">
+    cell.style.cssText=`position:absolute;left:${px}%;top:${py}%;transform:translate(-50%,-50%);width:76px;height:58px;display:flex;flex-direction:column;align-items:center;pointer-events:none;`;
+    const row=(color,dir,val)=>`<div style="width:100%;height:18px;display:flex;align-items:center;justify-content:space-between;text-shadow:0 1px 1px #fff9">
         <span style="color:${color};font-size:16px;line-height:1;font-weight:900;display:inline-block;transform:rotate(${dir}deg)">➜</span>
-        <span style="color:${color};font-size:10px;font-weight:800">${val}</span>
+        <span style="color:${color};font-size:9px;font-weight:800;white-space:nowrap">${val}</span>
       </div>`;
-    cell.innerHTML=`${row('#dc2626',windTo,wSpeed)}${row('#16a34a',curTo,cSpeed)}${row('#2563eb',waveTo,waveH)}`;
+    cell.innerHTML=`${row('#dc2626',windTo,`${wSpeed}m/s ${windDeg}°`)}${row('#16a34a',curTo,`${cSpeed}m/s`)}${row('#2563eb',waveTo,`${waveH}m`)}`;
     vectorOverlay.appendChild(cell);
   });
 }
@@ -352,6 +354,52 @@ function navTargetForMark(mark){
   return {lat:w.lat,lon:w.lon};
 }
 
+function shouldRoundActiveMark(){
+  const m=marks[active];
+  return !!(m && m.type==='runding' && active>0 && active<marks.length-1);
+}
+function routePointObj(p){ return Array.isArray(p)?{lat:p[0],lon:p[1]}:p; }
+function routePointArr(p){ return Array.isArray(p)?p:[p.lat,p.lon]; }
+function appendRoute(a,b){
+  const out=(a||[]).map(routePointArr);
+  for(const p of (b||[]).map(routePointArr)){
+    const last=out[out.length-1];
+    if(!last || distance(last[0],last[1],p[0],p[1])>2) out.push(p);
+  }
+  return out;
+}
+function routeIsClear(route){
+  for(let i=1;i<route.length;i++) if(isLand(route[i][0],route[i][1])||crossesLand(route[i-1],route[i])) return false;
+  return true;
+}
+function arcAroundMark(mark,from,next){
+  const pass=+$('radius').value||60;
+  const r=Math.max(35,Math.min(95,pass*0.9));
+  const c={lat:mark.lat,lon:mark.lon};
+  const startA=bearing(c.lat,c.lon,from.lat,from.lon);
+  const endA=bearing(c.lat,c.lon,next.lat,next.lon);
+  const make=(dir)=>{
+    let delta=dir>0 ? (endA-startA+360)%360 : -((startA-endA+360)%360);
+    if(Math.abs(delta)<125) delta += dir*180;
+    if(Math.abs(delta)>240) delta -= dir*120;
+    const steps=Math.max(5,Math.ceil(Math.abs(delta)/24));
+    const pts=[];
+    for(let i=0;i<=steps;i++){
+      const p=dest(c.lat,c.lon,norm(startA+delta*i/steps),r);
+      const w=nearestWater(p.lat,p.lon);
+      pts.push([w.lat,w.lon]);
+    }
+    return pts;
+  };
+  const choices=[make(1),make(-1)].filter(routeIsClear);
+  if(!choices.length) return make(1);
+  return choices.sort((a,b)=>a.length-b.length)[0];
+}
+function activeRouteTarget(defaultTarget){
+  const last=boatNav.route?.[boatNav.route.length-1];
+  return last?{lat:last[0],lon:last[1]}:defaultTarget;
+}
+
 async function fetchServerRoute(from,target,opts={}){
   if(!ROUTE_API_URL)return null;
   const params=new URLSearchParams({
@@ -381,17 +429,17 @@ function warmRouteApi(){
   if(ROUTE_API_URL)fetch(`${ROUTE_API_URL}/health`).catch(()=>{});
 }
 
-function requestServerBoatRoute(target){
+function requestServerBoatRoute(target,extraRoute=[],rounding=false){
   if(!ROUTE_API_URL||!pos)return false;
-  boatNav={active,route:[],idx:1,pending:true,source:'server'};
+  boatNav={active,route:[],idx:1,pending:true,source:'server',rounding};
   setStatus('Beregner sjørute');
   fetchServerRoute({lat:pos.lat,lon:pos.lon},target).then(r=>{
     // Ikke overskriv hvis brukeren har byttet aktiv bøye mens API-et jobbet.
     if(boatNav.active!==active)return;
-    boatNav={active,route:r.route,idx:1,pending:false,source:r.source||'server'};
+    boatNav={active,route:appendRoute(r.route,extraRoute),idx:1,pending:false,source:r.source||'server',rounding};
   }).catch(err=>{
     console.warn('Sea route API failed',err);
-    if(boatNav.active===active)boatNav={active,route:[],idx:1,pending:false,source:'server-error'};
+    if(boatNav.active===active)boatNav={active,route:[],idx:1,pending:false,source:'server-error',rounding:false};
     setStatus('Sjørute-feil');
   });
   return true;
@@ -399,11 +447,17 @@ function requestServerBoatRoute(target){
 
 function planBoatRouteToActive(){
   if(!pos||!marks.length||active>=marks.length)return null;
-  const target=navTargetForMark(marks[active]);
-  if(ROUTE_API_URL){requestServerBoatRoute(target);return target;}
-  const route=waterRoute([pos.lat,pos.lon],[target.lat,target.lon]);
-  boatNav={active,route,idx:1,pending:false,source:'client'};
-  return target;
+  let target=navTargetForMark(marks[active]);
+  let extraRoute=[],rounding=false;
+  if(shouldRoundActiveMark()){
+    extraRoute=arcAroundMark(marks[active],pos,marks[active+1]);
+    target=routePointObj(extraRoute[0]);
+    rounding=true;
+  }
+  if(ROUTE_API_URL){requestServerBoatRoute(target,extraRoute,rounding);return activeRouteTarget(target);}
+  const route=appendRoute(waterRoute([pos.lat,pos.lon],[target.lat,target.lon]),extraRoute);
+  boatNav={active,route,idx:1,pending:false,source:'client',rounding};
+  return activeRouteTarget(target);
 }
 
 function currentBoatWaypoint(target){
@@ -489,8 +543,8 @@ function update(){
   $('course').textContent=Math.round(brg)+'°';
   
   const w=weather.wind||{},c=weather.marine||{};
-  $('wind').textContent=`${(w.wind_speed_10m||4.7).toFixed(1)} m/s fra ${Math.round(w.wind_direction_10m||177)}°`;
-  $('sea').textContent=`strøm ${c.ocean_current_velocity? c.ocean_current_velocity.toFixed(1)+' m/s':'–'} / bølge ${(c.wave_height||0.4).toFixed(1)} m`;
+  $('wind').textContent=`${(w.wind_speed_10m??4.7).toFixed(1)} m/s fra ${(w.wind_direction_10m??177).toFixed(0)}°`;
+  $('sea').textContent=`strøm ${(c.ocean_current_velocity??0).toFixed(1)} m/s ${(c.ocean_current_direction??0).toFixed(0)}° / bølge ${(c.wave_height??0.4).toFixed(1)} m`;
 
   $('advice').textContent=`Følg blå løype mot ${t.name}. Rød stiplet linje viser anbefalt kurs/vei mot neste punkt.`;
   $('details').textContent=`Peiling ${Math.round(brg)}°, avstand ${Math.round(dst)} m. Vind/strøm hentes live fra Open-Meteo.`;
@@ -537,23 +591,26 @@ function advanceBoatOnCourse(dtSec){
     const radius=+$('radius').value||60;
     if(active <= 0 && distance(pos.lat,pos.lon,marks[0].lat,marks[0].lon) < radius && marks.length>1){active=1;resetBoatNav();}
     const targetMark=marks[Math.min(active,marks.length-1)];
-    const target=navTargetForMark(targetMark);
+    const rounding=shouldRoundActiveMark();
+    let target=navTargetForMark(targetMark);
     const step=Math.max(0.2,speedMs*dtSec);
     const dTarget=distance(pos.lat,pos.lon,target.lat,target.lon);
     const dMark=distance(pos.lat,pos.lon,targetMark.lat,targetMark.lon);
 
-    if(Math.min(dTarget,dMark) <= Math.max(step,radius)){
+    if(!rounding && Math.min(dTarget,dMark) <= Math.max(step,radius)){
       // Marker bøyen som rundet når vi er innen passering, men flytt ikke båten inn på land.
       if(active < marks.length-1){active++;resetBoatNav();}
       save();return;
     }
 
     if(boatNav.active!==active||!boatNav.route||boatNav.route.length<2)planBoatRouteToActive();
+    target=activeRouteTarget(target);
     const waypoint=currentBoatWaypoint(target);
     if(!waypoint){save();return;}
     safeAdvanceTowardWaypoint(waypoint,step);
 
     if(boatNav.route&&boatNav.idx>=boatNav.route.length-1&&distance(pos.lat,pos.lon,target.lat,target.lon)<Math.max(24,step*2)){
+      if(boatNav.rounding && active < marks.length-1) active++;
       resetBoatNav();
     }
     if(isLand(pos.lat,pos.lon)){const w=nearestWater(pos.lat,pos.lon);pos.lat=w.lat;pos.lon=w.lon;resetBoatNav();}
