@@ -72,6 +72,14 @@ for (let i = 1; i < red.length; i++) {
   assert.ok(!crossesLand(red[i - 1], red[i]), 'recommended red segment should not cross land');
 }
 
+assert.equal(typeof vectorValues, 'function', 'vector indicator values should be formatted per local sample');
+const v1 = vectorValues({wind:{wind_speed_10m:4.74,wind_direction_10m:176.6},marine:{ocean_current_velocity:0.53,ocean_current_direction:86.2,wave_height:0.42,wave_direction:190}});
+const v2 = vectorValues({wind:{wind_speed_10m:5.21,wind_direction_10m:184.4},marine:{ocean_current_velocity:0.71,ocean_current_direction:93.8,wave_height:0.68,wave_direction:205}});
+assert.notEqual(v1.windLabel, v2.windLabel, 'wind labels should vary between sampled map points');
+assert.ok(v1.windLabel.includes('4.7m/s') && v1.windLabel.includes('177°'), 'wind indicator should show decimal speed and degrees');
+assert.notEqual(v1.currentLabel, v2.currentLabel, 'current labels should vary between sampled map points');
+assert.notEqual(v1.waveLabel, v2.waveLabel, 'wave labels should vary between sampled map points');
+
 const route = waterRoute([marks[2].lat, marks[2].lon], [marks[3].lat, marks[3].lon]);
 for (let i = 2; i < route.length; i++) {
   const prev = bearing(route[i - 2][0], route[i - 2][1], route[i - 1][0], route[i - 1][1]);
