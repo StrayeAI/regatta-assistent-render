@@ -743,13 +743,51 @@ function addPointFromMap(latlng){
   save();render();update();
 }
 
-let pressTimer=null;
-// Leaflet gir contextmenu ved høyreklikk på desktop og langt trykk på mobil.
-// Det holder addPointFromMap i en ekte brukerinteraksjon, så dialogene faktisk åpner.
-map.on('contextmenu',e=>{clearTimeout(pressTimer);addPointFromMap(e.latlng);});
-map.on('mousedown',e=>{clearTimeout(pressTimer);pressTimer=setTimeout(()=>addPointFromMap(e.latlng),650);});
-map.on('mouseup mouseout dragstart move',()=>clearTimeout(pressTimer));
-map.on('click',e=>{if(pendingBoatStart)setBoatStart(e.latlng.lat,e.latlng.lng);});
+let pressTimer=null, pressLatLng=null, pressTriggered=false, suppressNextClick=false, pressTouchStart=null;
+function clearMapLongPress(){
+  clearTimeout(pressTimer);
+  pressTimer=null;
+  pressLatLng=null;
+}
+function armMapLongPress(latlng){
+  clearMapLongPress();
+  pressLatLng=latlng;
+  pressTriggered=false;
+  pressTimer=setTimeout(()=>{
+    pressTriggered=true;
+    suppressNextClick=true;
+    if(pressLatLng)addPointFromMap(pressLatLng);
+  },650);
+}
+// Leaflet gir contextmenu ved høyreklikk på desktop. I mobil/PWA må vi i tillegg
+// håndtere touch selv, ellers kommer ikke langt-trykk frem pålitelig.
+map.on('contextmenu',e=>{clearMapLongPress();pressTriggered=true;suppressNextClick=true;addPointFromMap(e.latlng);});
+map.on('mousedown',e=>armMapLongPress(e.latlng));
+map.on('mouseup mouseout dragstart move',()=>clearMapLongPress());
+map.on('click',e=>{
+  if(suppressNextClick){suppressNextClick=false;return;}
+  if(pendingBoatStart)setBoatStart(e.latlng.lat,e.latlng.lng);
+});
+const mapContainer=map.getContainer?.() || $('map');
+if(mapContainer?.addEventListener && map.mouseEventToLatLng){
+  mapContainer.addEventListener('touchstart',ev=>{
+    if(!ev.touches || ev.touches.length!==1)return;
+    const t=ev.touches[0];
+    pressTouchStart={x:t.clientX,y:t.clientY};
+    armMapLongPress(map.mouseEventToLatLng(t));
+  },{passive:true});
+  mapContainer.addEventListener('touchmove',ev=>{
+    if(!pressTimer || !pressTouchStart || !ev.touches || ev.touches.length!==1)return;
+    const t=ev.touches[0];
+    if(Math.hypot(t.clientX-pressTouchStart.x,t.clientY-pressTouchStart.y)>14) clearMapLongPress();
+  },{passive:true});
+  mapContainer.addEventListener('touchend',ev=>{
+    if(pressTriggered && ev.cancelable)ev.preventDefault();
+    clearMapLongPress();
+    pressTouchStart=null;
+  },{passive:false});
+  mapContainer.addEventListener('touchcancel',()=>{clearMapLongPress();pressTouchStart=null;},{passive:true});
+}
 map.on('moveend zoomend',()=>{if(window._vecTimer)clearTimeout(window._vecTimer);window._vecTimer=setTimeout(renderVectors,220);});
 
 $('sim').onclick=async()=>{

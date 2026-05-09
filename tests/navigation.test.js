@@ -20,13 +20,13 @@ global.document = {
       appendChild(){}
     };
   },
-  createElement() { return { style: {}, innerHTML: '', appendChild(){} }; }
+  createElement() { return { style: {}, innerHTML: '', appendChild(){}, addEventListener(){} }; }
 };
 global.window = { addEventListener(){}, _vecTimer: null };
 global.location = { search: '?routeApi=off' };
 global.navigator = { serviceWorker: { register(){ return { catch(){} }; } }, geolocation: { watchPosition(){} } };
 global.L = {
-  map(){ return { setView(){ return this; }, getBounds(){ return { getNorth(){ return 59.23; }, getSouth(){ return 59.18; }, getEast(){ return 10.85; }, getWest(){ return 10.72; } }; }, on(){}, getZoom(){ return 13; } }; },
+  map(){ return { setView(){ return this; }, getBounds(){ return { getNorth(){ return 59.23; }, getSouth(){ return 59.18; }, getEast(){ return 10.85; }, getWest(){ return 10.72; } }; }, on(){}, getZoom(){ return 13; }, getContainer(){ return { addEventListener(){} }; }, mouseEventToLatLng(t){ return { lat: t.clientY || 59.2, lng: t.clientX || 10.8 }; } }; },
   tileLayer(){ return { addTo(){} }; },
   polyline(pts,opt){ return { pts, opt, addTo(){ return this; }, remove(){} }; },
   marker(){ return { addTo(){ return this; }, bindPopup(){ return this; }, on(){ return this; }, setLatLng(){}, setIcon(){}, remove(){} }; },
