@@ -4,8 +4,20 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const WEB_ROOT = path.join(__dirname, '..');
 const R = 6371000;
 const DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'data/coastline-hanko.json'), 'utf8'));
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon'
+};
 
 // Hand-tuned coarse land masks retained from the PWA until a full nautical S-57/S-101
 // dataset is wired in. OSM closed coastline ways below are the primary mask.
@@ -209,6 +221,31 @@ function parseLL(s,name){
   if(parts.length!==2||parts.some(n=>!Number.isFinite(n))) throw new Error(`${name} must be lat,lon`);
   return parts;
 }
+function sendFile(res,filePath){
+  const ext=path.extname(filePath).toLowerCase();
+  const type=MIME[ext] || 'application/octet-stream';
+  res.writeHead(200,{'content-type':type});
+  fs.createReadStream(filePath).pipe(res);
+}
+function tryServeStatic(urlPath,res){
+  let rel=urlPath === '/' ? '/index.html' : urlPath;
+  rel=path.posix.normalize(rel);
+  if(rel.startsWith('/..')) return false;
+  const filePath=path.join(WEB_ROOT, rel.replace(/^\//,''));
+  if(!filePath.startsWith(WEB_ROOT)) return false;
+  if(fs.existsSync(filePath) && fs.statSync(filePath).isFile()){
+    sendFile(res,filePath);
+    return true;
+  }
+  if(!path.extname(rel)){
+    const indexPath=path.join(WEB_ROOT,'index.html');
+    if(fs.existsSync(indexPath)){
+      sendFile(res,indexPath);
+      return true;
+    }
+  }
+  return false;
+}
 export function startServer(port=8787){
   return http.createServer((req,res)=>{
     cors(res); if(req.method==='OPTIONS'){res.writeHead(204).end(); return;}
@@ -225,6 +262,7 @@ export function startServer(port=8787){
         });
         res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({ok:true,...result})); return;
       }
+      if(tryServeStatic(url.pathname,res)) return;
       res.writeHead(404,{'content-type':'application/json'}).end(JSON.stringify({ok:false,error:'not found'}));
     }catch(e){ res.writeHead(400,{'content-type':'application/json'}).end(JSON.stringify({ok:false,error:e.message})); }
   }).listen(port,()=>console.log(`sea route api listening on :${port}`));

@@ -7,8 +7,11 @@ let vectorField = [], vectorFetchKey = '', vectorFetchInFlight = false, lastVect
 let pendingBoatStart = false, boatMarker = null;
 let routeLine = null, redRouteLine = null, overlays = [];
 let boatNav = { active: null, route: [], idx: 1, pending: false, source: 'client' };
-const APP_VERSION = '2026-05-02-pwa22';
-const DEFAULT_ROUTE_API_URL = 'https://regatta-route-api.onrender.com';
+const APP_VERSION = '2026-05-09-pwa23';
+const SAME_ORIGIN_ROUTE_API = ['localhost','127.0.0.1'].includes(location.hostname) || !/github\.io$/i.test(location.hostname)
+  ? location.origin
+  : '';
+const DEFAULT_ROUTE_API_URL = SAME_ORIGIN_ROUTE_API || 'https://regatta-route-api.onrender.com';
 const query = new URLSearchParams(location.search);
 const routeApiParam = query.get('routeApi');
 if(routeApiParam && routeApiParam !== 'off') localStorage.regattaRouteApiUrl = routeApiParam;
