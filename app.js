@@ -744,8 +744,11 @@ function addPointFromMap(latlng){
 }
 
 let pressTimer=null;
-map.on('mousedown touchstart',e=>{clearTimeout(pressTimer);pressTimer=setTimeout(()=>addPointFromMap(e.latlng),650);});
-map.on('mouseup mouseout touchend touchcancel dragstart move',()=>clearTimeout(pressTimer));
+// Leaflet gir contextmenu ved høyreklikk på desktop og langt trykk på mobil.
+// Det holder addPointFromMap i en ekte brukerinteraksjon, så dialogene faktisk åpner.
+map.on('contextmenu',e=>{clearTimeout(pressTimer);addPointFromMap(e.latlng);});
+map.on('mousedown',e=>{clearTimeout(pressTimer);pressTimer=setTimeout(()=>addPointFromMap(e.latlng),650);});
+map.on('mouseup mouseout dragstart move',()=>clearTimeout(pressTimer));
 map.on('click',e=>{if(pendingBoatStart)setBoatStart(e.latlng.lat,e.latlng.lng);});
 map.on('moveend zoomend',()=>{if(window._vecTimer)clearTimeout(window._vecTimer);window._vecTimer=setTimeout(renderVectors,220);});
 
