@@ -7,10 +7,11 @@ const appSource = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 const harness = `
 global.localStorage = {};
 const elems = {};
+global.gpsState = { watchCalls: 0, clearCalls: 0, lastWatchId: 0, cleared: null };
 global.document = {
   getElementById(id) {
     return elems[id] ||= {
-      value: id === 'upwind' ? '43' : id === 'radius' ? '60' : id === 'simSpeed' ? '5.5' : id === 'simHeading' ? '210' : '0',
+      value: id === 'upwind' ? '43' : id === 'radius' ? '60' : id === 'simSpeed' ? '5.5' : id === 'simHeading' ? '210' : id === 'polarMode' ? 'orc' : '0',
       textContent: '',
       innerHTML: '',
       classList: { remove(){}, toggle(){} },
@@ -20,11 +21,16 @@ global.document = {
       appendChild(){}
     };
   },
-  createElement() { return { style: {}, innerHTML: '', appendChild(){}, addEventListener(){} }; }
+  createElement() { return { style: {}, innerHTML: '', textContent: '', appendChild(){}, addEventListener(){}, append(){}, remove(){}, onclick: null }; },
+  body: { appendChild(){}, removeChild(){} },
+  documentElement: { appendChild(){}, removeChild(){} }
 };
 global.window = { addEventListener(){}, _vecTimer: null };
 global.location = { search: '?routeApi=off' };
-global.navigator = { serviceWorker: { register(){ return { catch(){} }; } }, geolocation: { watchPosition(){} } };
+global.navigator = { serviceWorker: { register(){ return { catch(){} }; } }, geolocation: {
+  watchPosition(){ gpsState.watchCalls++; return ++gpsState.lastWatchId; },
+  clearWatch(id){ gpsState.clearCalls++; gpsState.cleared = id; }
+} };
 global.L = {
   map(){ return { setView(){ return this; }, getBounds(){ return { getNorth(){ return 59.23; }, getSouth(){ return 59.18; }, getEast(){ return 10.85; }, getWest(){ return 10.72; } }; }, on(){}, getZoom(){ return 13; }, getContainer(){ return { addEventListener(){} }; }, mouseEventToLatLng(t){ return { lat: t.clientY || 59.2, lng: t.clientX || 10.8 }; } }; },
   tileLayer(){ return { addTo(){} }; },
@@ -84,6 +90,15 @@ for (let i = 1; i < red.length; i++) {
   assert.ok(!crossesLand(red[i - 1], red[i]), 'recommended red segment should not cross land');
 }
 
+assert.equal(typeof polarBoatSpeed, 'function', 'polar lookup should be available');
+assert.equal(typeof recommendedCourseTo, 'function', 'polar-based course recommendation should be available');
+assert.ok(polarBoatSpeed(12, 52, 'orc') > 6 && polarBoatSpeed(12, 52, 'orc') < 7, 'ORC polar lookup should return expected boat speed range');
+assert.ok(polarBoatSpeed(12, 150, 'nonspin') < polarBoatSpeed(12, 150, 'orc'), 'non-spin polar should be slower downwind than full ORC setup');
+const upwindTarget = { lat: dest(pos.lat, pos.lon, 177, 1000).lat, lon: dest(pos.lat, pos.lon, 177, 1000).lon };
+const rec = recommendedCourseTo(upwindTarget);
+assert.ok(Math.abs(diff(rec.course, 177)) >= 35, 'polar-based recommendation should avoid sailing straight into the wind');
+assert.ok(rec.polar && rec.polar.label, 'recommended course should include polar metadata');
+
 assert.equal(typeof vectorValues, 'function', 'vector indicator values should be formatted per local sample');
 const v1 = vectorValues({wind:{wind_speed_10m:4.74,wind_direction_10m:176.6},marine:{ocean_current_velocity:0.53,ocean_current_direction:86.2,wave_height:0.42,wave_direction:190}});
 const v2 = vectorValues({wind:{wind_speed_10m:5.21,wind_direction_10m:184.4},marine:{ocean_current_velocity:0.71,ocean_current_direction:93.8,wave_height:0.68,wave_direction:205}});
@@ -113,6 +128,22 @@ assert.equal(marks.length, 2, 'deleteMark should remove the selected mark');
 assert.equal(marks[1].name, 'Mål', 'deleteMark should keep remaining mark order');
 assert.equal(active, 1, 'deleteMark should adjust active index when deleting before active mark');
 assert.equal(boatNav.route.length, 0, 'deleteMark should reset planned boat route');
+
+marks = [];
+applyMapPointChoice({ lat: 59.2, lng: 10.8 }, '2', '');
+assert.equal(marks.length, 1, 'applyMapPointChoice should add a mark without prompt-only flow');
+assert.equal(marks[0].name, 'Bøye 1', 'rounding marks should get a default name when none is given');
+
+gpsWatchId = 77;
+stopGpsTracking();
+assert.equal(gpsState.clearCalls, 1, 'stopGpsTracking should clear an active GPS watch');
+assert.equal(gpsState.cleared, 77, 'stopGpsTracking should clear the stored GPS watch id');
+
+$('start').onclick();
+assert.ok(gpsState.watchCalls >= 1, 'GPS button should start a geolocation watch');
+const clearsBeforeSim = gpsState.clearCalls;
+$('sim').onclick();
+assert.equal(gpsState.clearCalls, clearsBeforeSim + 1, 'starting demo should stop GPS tracking so the demo boat can move');
 `;
 
 eval(harness + '\n' + appSource + '\n' + testCode);

@@ -5,9 +5,10 @@ let marks = [], active = 0, pos = null, weather = null, lastFetch = 0;
 let line = { pin: null, boat: null }, deferredPrompt = null, simOn = false, simTimer = null, vectorOverlay = null;
 let vectorField = [], vectorFetchKey = '', vectorFetchInFlight = false, lastVectorFetch = 0;
 let pendingBoatStart = false, boatMarker = null;
+let gpsWatchId = null;
 let routeLine = null, redRouteLine = null, overlays = [];
 let boatNav = { active: null, route: [], idx: 1, pending: false, source: 'client' };
-const APP_VERSION = '2026-05-09-pwa23';
+const APP_VERSION = '2026-05-10-polar1';
 const SAME_ORIGIN_ROUTE_API = ['localhost','127.0.0.1'].includes(location.hostname) || !/github\.io$/i.test(location.hostname)
   ? location.origin
   : '';
@@ -16,6 +17,62 @@ const query = new URLSearchParams(location.search);
 const routeApiParam = query.get('routeApi');
 if(routeApiParam && routeApiParam !== 'off') localStorage.regattaRouteApiUrl = routeApiParam;
 const ROUTE_API_URL = (routeApiParam === 'off' ? '' : (routeApiParam || localStorage.regattaRouteApiUrl || window.REGATTA_ROUTE_API_URL || DEFAULT_ROUTE_API_URL || '')).replace(/\/$/,'');
+const ORC_POLARS = {
+  orc: {
+    label: 'ORC',
+    windSpeeds: [4, 6, 8, 10, 12, 14, 16, 20, 24],
+    beatAngles: [45.7, 42.6, 40.7, 38.8, 37.9, 37.7, 37.7, 38.4, 39.9],
+    beatVMG: [2.38, 3.31, 3.98, 4.41, 4.62, 4.70, 4.74, 4.74, 4.63],
+    rows: {
+      52: [3.71, 5.00, 5.81, 6.24, 6.46, 6.56, 6.61, 6.67, 6.65],
+      60: [3.96, 5.24, 6.00, 6.39, 6.60, 6.73, 6.80, 6.89, 6.91],
+      75: [4.13, 5.38, 6.12, 6.51, 6.76, 6.95, 7.10, 7.29, 7.40],
+      90: [4.01, 5.27, 6.08, 6.57, 6.87, 7.08, 7.30, 7.67, 7.88],
+      110: [3.73, 5.14, 6.10, 6.63, 7.00, 7.36, 7.70, 8.15, 8.44],
+      120: [3.56, 4.94, 5.93, 6.53, 6.92, 7.31, 7.69, 8.36, 8.96],
+      135: [3.09, 4.42, 5.43, 6.18, 6.65, 7.04, 7.45, 8.22, 9.17],
+      150: [2.54, 3.75, 4.79, 5.66, 6.28, 6.70, 7.07, 7.82, 8.61]
+    },
+    runVMG: [2.20, 3.25, 4.15, 4.94, 5.62, 6.16, 6.57, 7.26, 7.95],
+    gybeAngles: [142.0, 147.1, 151.9, 155.6, 163.3, 170.0, 178.1, 178.1, 178.1]
+  },
+  doublehanded: {
+    label: 'ORC DH',
+    windSpeeds: [4, 6, 8, 10, 12, 14, 16, 20, 24],
+    beatAngles: [45.4, 42.0, 40.4, 39.3, 39.3, 39.4, 39.7, 40.8, 43.2],
+    beatVMG: [2.41, 3.32, 3.94, 4.29, 4.42, 4.47, 4.49, 4.44, 4.26],
+    rows: {
+      52: [3.74, 4.97, 5.76, 6.14, 6.32, 6.39, 6.43, 6.45, 6.38],
+      60: [3.99, 5.20, 5.94, 6.31, 6.50, 6.59, 6.65, 6.70, 6.68],
+      75: [4.15, 5.35, 6.07, 6.46, 6.69, 6.85, 6.97, 7.12, 7.19],
+      90: [4.05, 5.27, 6.04, 6.49, 6.77, 7.01, 7.22, 7.54, 7.72],
+      110: [3.76, 5.15, 6.08, 6.60, 6.96, 7.31, 7.61, 7.92, 8.08],
+      120: [3.59, 4.96, 5.93, 6.52, 6.92, 7.30, 7.67, 8.29, 8.66],
+      135: [3.12, 4.44, 5.45, 6.19, 6.67, 7.08, 7.50, 8.28, 9.33],
+      150: [2.57, 3.78, 4.81, 5.67, 6.29, 6.72, 7.12, 7.90, 8.80]
+    },
+    runVMG: [2.22, 3.27, 4.17, 4.95, 5.63, 6.16, 6.59, 7.33, 8.04],
+    gybeAngles: [141.5, 147.1, 151.9, 155.7, 163.6, 169.6, 177.2, 177.2, 177.2]
+  },
+  nonspin: {
+    label: 'Non-spin',
+    windSpeeds: [4, 6, 8, 10, 12, 14, 16, 20, 24],
+    beatAngles: [45.7, 42.6, 40.7, 38.8, 37.9, 37.7, 37.8, 38.3, 40.0],
+    beatVMG: [2.38, 3.31, 3.98, 4.41, 4.62, 4.70, 4.74, 4.74, 4.63],
+    rows: {
+      52: [3.71, 5.00, 5.82, 6.24, 6.46, 6.56, 6.61, 6.67, 6.65],
+      60: [3.96, 5.24, 6.00, 6.39, 6.60, 6.73, 6.80, 6.89, 6.91],
+      75: [4.13, 5.38, 6.12, 6.51, 6.76, 6.95, 7.10, 7.29, 7.40],
+      90: [4.01, 5.27, 6.08, 6.52, 6.81, 7.06, 7.30, 7.68, 7.88],
+      110: [3.43, 4.72, 5.70, 6.33, 6.72, 7.06, 7.40, 8.00, 8.51],
+      120: [3.14, 4.46, 5.46, 6.16, 6.60, 6.94, 7.29, 7.95, 8.61],
+      135: [2.67, 3.93, 4.93, 5.74, 6.30, 6.67, 7.00, 7.68, 8.35],
+      150: [2.23, 3.34, 4.33, 5.17, 5.86, 6.35, 6.70, 7.34, 7.98]
+    },
+    runVMG: [1.93, 2.90, 3.76, 4.54, 5.25, 5.87, 6.33, 6.97, 7.60],
+    gybeAngles: [142.4, 147.8, 153.7, 162.2, 170.5, 177.7, 179.5, 179.7, 179.7]
+  }
+};
 
 if (localStorage.regattaAppVersion !== APP_VERSION) {
   localStorage.regattaAppVersion = APP_VERSION;
@@ -31,6 +88,13 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 function setStatus(text){$('status').textContent=`${text} · ${APP_VERSION.replace('2026-05-02-','')}`;}
 
+function stopGpsTracking(){
+  if(gpsWatchId!=null && navigator.geolocation?.clearWatch){
+    try{ navigator.geolocation.clearWatch(gpsWatchId); }catch{}
+  }
+  gpsWatchId=null;
+}
+
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; $('install').hidden = false; });
 $('install').onclick = () => deferredPrompt?.prompt();
@@ -41,6 +105,90 @@ function norm(d){return (d%360+360)%360;}
 function diff(a,b){return ((a-b+540)%360)-180;}
 function kt(ms){return (ms||0)*1.94384;}
 function ms(kn){return kn/1.94384;}
+function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
+function lerp(a,b,t){return a+(b-a)*t;}
+function interp1(xs,ys,x){
+  if(!xs?.length||!ys?.length)return 0;
+  if(x<=xs[0])return ys[0];
+  if(x>=xs[xs.length-1])return ys[ys.length-1];
+  for(let i=1;i<xs.length;i++){
+    if(x<=xs[i]){
+      const span=xs[i]-xs[i-1]||1;
+      return lerp(ys[i-1],ys[i],(x-xs[i-1])/span);
+    }
+  }
+  return ys[ys.length-1];
+}
+function currentPolarMode(){
+  const el=$('polarMode');
+  const mode=(el?.value || localStorage.regattaPolarMode || 'orc');
+  return ORC_POLARS[mode]?mode:'orc';
+}
+function currentPolar(){return ORC_POLARS[currentPolarMode()]||ORC_POLARS.orc;}
+function rowAtTws(values,twsKt,polar=currentPolar()){
+  return interp1(polar.windSpeeds,values,twsKt);
+}
+function polarBoatSpeed(twsKt,twaDeg,mode=currentPolarMode()){
+  const polar=ORC_POLARS[mode]||ORC_POLARS.orc;
+  const twa=clamp(Math.abs(twaDeg),0,180);
+  const beatAngle=rowAtTws(polar.beatAngles,twsKt,polar);
+  const beatVMG=rowAtTws(polar.beatVMG,twsKt,polar);
+  const beatSpeed=beatVMG/Math.max(0.08,Math.cos(rad(beatAngle)));
+  const gybeAngle=rowAtTws(polar.gybeAngles,twsKt,polar);
+  const runVMG=rowAtTws(polar.runVMG,twsKt,polar);
+  const runSpeed=runVMG/Math.max(0.08,Math.abs(Math.cos(rad(gybeAngle))));
+  const anchors=[
+    [beatAngle,beatSpeed],
+    [52,rowAtTws(polar.rows[52],twsKt,polar)],
+    [60,rowAtTws(polar.rows[60],twsKt,polar)],
+    [75,rowAtTws(polar.rows[75],twsKt,polar)],
+    [90,rowAtTws(polar.rows[90],twsKt,polar)],
+    [110,rowAtTws(polar.rows[110],twsKt,polar)],
+    [120,rowAtTws(polar.rows[120],twsKt,polar)],
+    [135,rowAtTws(polar.rows[135],twsKt,polar)],
+    [150,rowAtTws(polar.rows[150],twsKt,polar)],
+    [gybeAngle,runSpeed]
+  ].sort((a,b)=>a[0]-b[0]);
+  if(twa<=anchors[0][0])return anchors[0][1];
+  if(twa>=anchors[anchors.length-1][0])return anchors[anchors.length-1][1];
+  for(let i=1;i<anchors.length;i++){
+    if(twa<=anchors[i][0]){
+      const [a1,s1]=anchors[i-1], [a2,s2]=anchors[i];
+      return lerp(s1,s2,(twa-a1)/Math.max(0.001,a2-a1));
+    }
+  }
+  return anchors[anchors.length-1][1];
+}
+function recommendedCourseTo(target){
+  const windFrom=weather?.wind?.wind_direction_10m;
+  const twsKt=kt(weather?.wind?.wind_speed_10m??4.7);
+  const cur=weather?.marine||{};
+  const polar=currentPolar();
+  const from={lat:pos.lat,lon:pos.lon};
+  let directBrg=bearing(from.lat,from.lon,target.lat,target.lon);
+
+  if(cur.ocean_current_velocity!=null && cur.ocean_current_direction!=null){
+    const side=cur.ocean_current_velocity*Math.sin(rad(diff(cur.ocean_current_direction,directBrg)));
+    directBrg=norm(directBrg+Math.max(-12,Math.min(12,deg(Math.atan2(side,3.0)))));
+  }
+
+  if(windFrom==null){
+    return { course: directBrg, bearing: directBrg, twa: null, twsKt, boatSpeed: null, polar };
+  }
+
+  const minTwa=rowAtTws(polar.beatAngles,twsKt,polar)-0.5;
+  const maxTwa=rowAtTws(polar.gybeAngles,twsKt,polar)+0.5;
+  let best=null;
+  for(let course=0;course<360;course+=2){
+    const twa=Math.abs(diff(course,windFrom));
+    if(twa<minTwa || twa>maxTwa)continue;
+    const boatSpeed=polarBoatSpeed(twsKt,twa, currentPolarMode());
+    const progress=boatSpeed*Math.cos(rad(Math.abs(diff(course,directBrg))));
+    const score=progress-(Math.abs(diff(course,directBrg))*0.0025);
+    if(!best || score>best.score) best={course,note:'polar',bearing:directBrg,twa,twsKt,boatSpeed,progress,score,polar};
+  }
+  return best||{ course: directBrg, bearing: directBrg, twa: Math.abs(diff(directBrg,windFrom)), twsKt, boatSpeed: polarBoatSpeed(twsKt,Math.abs(diff(directBrg,windFrom)), currentPolarMode()), polar };
+}
 function bearing(lat1,lon1,lat2,lon2){
   const p1=rad(lat1),p2=rad(lat2),dl=rad(lon2-lon1);
   return deg(Math.atan2(Math.sin(dl)*Math.cos(p2),Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl)));
@@ -516,14 +664,17 @@ function requestServerBoatRoute(target,extraRoute=[],rounding=false,roundingPlan
   if(!ROUTE_API_URL||!pos)return false;
   boatNav={active,route:[],idx:1,pending:true,source:'server',rounding,roundingPlanned};
   setStatus('Beregner sjørute');
+  const from={lat:pos.lat,lon:pos.lon};
   fetchServerRoute({lat:pos.lat,lon:pos.lon},target).then(r=>{
     // Ikke overskriv hvis brukeren har byttet aktiv bøye mens API-et jobbet.
     if(boatNav.active!==active)return;
     boatNav={active,route:appendRoute(r.route,extraRoute),idx:1,pending:false,source:r.source||'server',rounding,roundingPlanned};
   }).catch(err=>{
     console.warn('Sea route API failed',err);
-    if(boatNav.active===active)boatNav={active,route:[],idx:1,pending:false,source:'server-error',rounding:false,roundingPlanned:false};
-    setStatus('Sjørute-feil');
+    if(boatNav.active!==active)return;
+    const localRoute=appendRoute(waterRoute([from.lat,from.lon],[target.lat,target.lon]),extraRoute);
+    boatNav={active,route:localRoute,idx:1,pending:false,source:'client-fallback',rounding,roundingPlanned};
+    setStatus('Lokal sjørute');
   });
   return true;
 }
@@ -590,24 +741,9 @@ function safeProjection(start,course,maxMeters=850){
 }
 
 function recommendedRouteTo(target){
-  const windFrom=weather?.wind?.wind_direction_10m;
-  const cur=weather?.marine||{};
   const from={lat:pos.lat,lon:pos.lon};
-  let directBrg=bearing(from.lat,from.lon,target.lat,target.lon);
-
-  // Enkel strømkompensasjon: legg litt mot strømmen sideveis.
-  if(cur.ocean_current_velocity!=null && cur.ocean_current_direction!=null){
-    const side=cur.ocean_current_velocity*Math.sin(rad(diff(cur.ocean_current_direction,directBrg)));
-    directBrg=norm(directBrg+Math.max(-12,Math.min(12,deg(Math.atan2(side,3.0)))));
-  }
-
-  let course=directBrg;
-  if(windFrom!=null && Math.abs(diff(course,windFrom)) < (+$('upwind').value||43)+8){
-    const up=+$('upwind').value||43;
-    const tackA=norm(windFrom+up), tackB=norm(windFrom-up);
-    course=Math.abs(diff(tackA,directBrg))<Math.abs(diff(tackB,directBrg))?tackA:tackB;
-  }
-  return safeProjection(from,course,900);
+  const rec=recommendedCourseTo(target);
+  return safeProjection(from,rec.course,900);
 }
 
 function renderRecommended(){
@@ -623,15 +759,19 @@ function update(){
   const t=marks[active];
   const brg=bearing(pos.lat,pos.lon,t.lat,t.lon);
   const dst=distance(pos.lat,pos.lon,t.lat,t.lon);
+  const rec=recommendedCourseTo(t);
   $('leg').innerHTML=`<b>${active+1}</b> ${t.name}<br><span style="font-size:.78rem">${Math.round(dst)} m</span>`;
-  $('course').textContent=Math.round(brg)+'°';
+  $('course').textContent=Math.round(rec.course)+'°';
   
   const w=weather.wind||{},c=weather.marine||{};
   $('wind').textContent=`${(w.wind_speed_10m??4.7).toFixed(1)} m/s fra ${(w.wind_direction_10m??177).toFixed(0)}°`;
   $('sea').textContent=`strøm ${(c.ocean_current_velocity??0).toFixed(1)} m/s ${(c.ocean_current_direction??0).toFixed(0)}° / bølge ${(c.wave_height??0.4).toFixed(1)} m ${(c.wave_direction??0).toFixed(0)}°`;
 
-  $('advice').textContent=`Følg blå løype mot ${t.name}. Rød stiplet linje viser anbefalt kurs/vei mot neste punkt.`;
-  $('details').textContent=`Peiling ${Math.round(brg)}°, avstand ${Math.round(dst)} m. Vind/strøm hentes live fra Open-Meteo.`;
+  const polarNote=rec.boatSpeed!=null && rec.twa!=null
+    ? `Polar ${rec.polar.label}: ${rec.boatSpeed.toFixed(1)} kn ved TWA ${Math.round(rec.twa)}° / TWS ${Math.round(rec.twsKt)} kn.`
+    : `Polar ${rec.polar.label} aktiv.`;
+  $('advice').textContent=`Følg blå løype mot ${t.name}. Rød stiplet linje viser anbefalt kurs ${Math.round(rec.course)}° fra polar.`;
+  $('details').textContent=`Peiling ${Math.round(brg)}°, avstand ${Math.round(dst)} m. ${polarNote} Vind/strøm hentes live fra Open-Meteo.`;
   if(!shouldRoundActiveMark() && dst < (+$('radius').value||60) && active < marks.length-1){active++;resetBoatNav();save();}
   render();
 }
@@ -720,27 +860,92 @@ function startSimLoop(){
   },900);
 }
 
-function addPointFromMap(latlng){
+function applyMapPointChoice(latlng,choice,name=''){
   if(pendingBoatStart)return setBoatStart(latlng.lat,latlng.lng);
-  const choice=prompt('Legg til punkt:\n1 = Start\n2 = Rundingsbøye\n3 = Mål\n4 = Startlinje pinne\n5 = Startlinje bøye\n6 = Flytt båt/startpunkt','2');
   if(choice==='6')return setBoatStart(latlng.lat,latlng.lng);
   if(choice==='4'){line.pin={lat:latlng.lat,lon:latlng.lng};save();render();return;}
   if(choice==='5'){line.boat={lat:latlng.lat,lon:latlng.lng};save();render();return;}
   const type=choice==='1'?'start':choice==='3'?'mål':'runding';
-  const name=choice==='1'?'Start':choice==='3'?'Mål':prompt('Navn på rundingsbøye:',`Bøye ${marks.length+1}`);
-  if(!name)return;
-  // Manuelle bøyer/start/mål skal ligge nøyaktig der brukeren trykker.
-  // Land-/vannjustering brukes kun for anbefalt rute, ikke for selve markøren.
+  const finalName=name.trim() || (choice==='1'?'Start':choice==='3'?'Mål':`Bøye ${marks.length+1}`);
   if(choice==='1') {
-    marks.unshift({name,lat:latlng.lat,lon:latlng.lng,type});
+    marks.unshift({name:finalName,lat:latlng.lat,lon:latlng.lng,type});
     active=marks.length>1?1:0;
-    // Startpunkt i løypa er også startpunkt for demo-båten.
     pos={lat:latlng.lat,lon:latlng.lng,sog:ms(+$('simSpeed').value||5.5),cog:+$('simHeading').value||210};
     resetBoatNav();
     fetchData(pos.lat,pos.lon).catch(()=>{});
+  } else {
+    marks.push({name:finalName,lat:latlng.lat,lon:latlng.lng,type});
+    resetBoatNav();
   }
-  else {marks.push({name,lat:latlng.lat,lon:latlng.lng,type});resetBoatNav();}
   save();render();update();
+}
+
+function addPointFromMap(latlng){
+  if(pendingBoatStart)return setBoatStart(latlng.lat,latlng.lng);
+  const choice=prompt('Legg til punkt:\n1 = Start\n2 = Rundingsbøye\n3 = Mål\n4 = Startlinje pinne\n5 = Startlinje bøye\n6 = Flytt båt/startpunkt','2');
+  if(!choice)return;
+  const name=choice==='2' ? prompt('Navn på rundingsbøye:',`Bøye ${marks.length+1}`) : '';
+  if(choice==='2' && name===null)return;
+  applyMapPointChoice(latlng,choice,name||'');
+}
+
+let mapPointMenu=null;
+function closeMapPointMenu(){
+  mapPointMenu?.remove?.();
+  mapPointMenu=null;
+}
+function openMapPointMenu(latlng){
+  if(pendingBoatStart)return setBoatStart(latlng.lat,latlng.lng);
+  const host=document.body||document.documentElement;
+  if(!host?.appendChild)return addPointFromMap(latlng);
+  closeMapPointMenu();
+  const wrap=document.createElement('div');
+  wrap.style.cssText='position:fixed;inset:0;z-index:5000;background:rgba(3,10,18,.55);display:flex;align-items:flex-end;justify-content:center;padding:16px;';
+  const panel=document.createElement('div');
+  panel.style.cssText='width:min(520px,100%);background:#0f172a;color:#fff;border:1px solid rgba(148,163,184,.25);border-radius:18px;padding:14px;box-shadow:0 20px 60px rgba(0,0,0,.45);';
+  const title=document.createElement('div');
+  title.textContent='Legg til punkt';
+  title.style.cssText='font-weight:700;font-size:1rem;margin-bottom:10px;';
+  const sub=document.createElement('div');
+  sub.textContent='Velg hva som skal settes på kartet.';
+  sub.style.cssText='color:#cbd5e1;font-size:.92rem;margin-bottom:12px;';
+  const grid=document.createElement('div');
+  grid.style.cssText='display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;';
+  const actions=[
+    ['1','Start'],
+    ['2','Rundingsbøye'],
+    ['3','Mål'],
+    ['4','Startlinje pinne'],
+    ['5','Startlinje bøye'],
+    ['6','Flytt båt/startpunkt']
+  ];
+  for(const [value,label] of actions){
+    const btn=document.createElement('button');
+    btn.type='button';
+    btn.textContent=label;
+    btn.style.cssText='appearance:none;border:1px solid rgba(148,163,184,.25);background:#1e293b;color:#fff;border-radius:12px;padding:12px 10px;font:inherit;font-weight:600;';
+    btn.onclick=()=>{
+      let name='';
+      if(value==='2'){
+        const picked=prompt('Navn på rundingsbøye:',`Bøye ${marks.length+1}`);
+        if(picked===null)return;
+        name=picked;
+      }
+      closeMapPointMenu();
+      applyMapPointChoice(latlng,value,name);
+    };
+    grid.appendChild(btn);
+  }
+  const cancel=document.createElement('button');
+  cancel.type='button';
+  cancel.textContent='Avbryt';
+  cancel.style.cssText='appearance:none;border:none;background:#334155;color:#fff;border-radius:12px;padding:12px 10px;font:inherit;font-weight:600;width:100%;margin-top:10px;';
+  cancel.onclick=closeMapPointMenu;
+  wrap.onclick=e=>{ if(e.target===wrap)closeMapPointMenu(); };
+  panel.append(title,sub,grid,cancel);
+  wrap.appendChild(panel);
+  host.appendChild(wrap);
+  mapPointMenu=wrap;
 }
 
 let pressTimer=null, pressLatLng=null, pressTriggered=false, suppressNextClick=false, pressTouchStart=null;
@@ -749,21 +954,26 @@ function clearMapLongPress(){
   pressTimer=null;
   pressLatLng=null;
 }
-function armMapLongPress(latlng){
+function armMapLongPress(latlng,startEvt){
   clearMapLongPress();
   pressLatLng=latlng;
   pressTriggered=false;
+  if(startEvt?.clientX!=null && startEvt?.clientY!=null) pressTouchStart={x:startEvt.clientX,y:startEvt.clientY};
   pressTimer=setTimeout(()=>{
     pressTriggered=true;
     suppressNextClick=true;
-    if(pressLatLng)addPointFromMap(pressLatLng);
+    if(pressLatLng)openMapPointMenu(pressLatLng);
   },650);
 }
 // Leaflet gir contextmenu ved høyreklikk på desktop. I mobil/PWA må vi i tillegg
 // håndtere touch selv, ellers kommer ikke langt-trykk frem pålitelig.
-map.on('contextmenu',e=>{clearMapLongPress();pressTriggered=true;suppressNextClick=true;addPointFromMap(e.latlng);});
-map.on('mousedown',e=>armMapLongPress(e.latlng));
-map.on('mouseup mouseout dragstart move',()=>clearMapLongPress());
+map.on('contextmenu',e=>{clearMapLongPress();pressTriggered=true;suppressNextClick=true;openMapPointMenu(e.latlng);});
+map.on('mousedown',e=>armMapLongPress(e.latlng,e.originalEvent));
+map.on('mousemove',e=>{
+  if(!pressTimer || !pressTouchStart || !e.originalEvent)return;
+  if(Math.hypot(e.originalEvent.clientX-pressTouchStart.x,e.originalEvent.clientY-pressTouchStart.y)>14) clearMapLongPress();
+});
+map.on('mouseup mouseout dragstart',()=>{clearMapLongPress();pressTouchStart=null;});
 map.on('click',e=>{
   if(suppressNextClick){suppressNextClick=false;return;}
   if(pendingBoatStart)setBoatStart(e.latlng.lat,e.latlng.lng);
@@ -773,8 +983,7 @@ if(mapContainer?.addEventListener && map.mouseEventToLatLng){
   mapContainer.addEventListener('touchstart',ev=>{
     if(!ev.touches || ev.touches.length!==1)return;
     const t=ev.touches[0];
-    pressTouchStart={x:t.clientX,y:t.clientY};
-    armMapLongPress(map.mouseEventToLatLng(t));
+    armMapLongPress(map.mouseEventToLatLng(t),t);
   },{passive:true});
   mapContainer.addEventListener('touchmove',ev=>{
     if(!pressTimer || !pressTouchStart || !ev.touches || ev.touches.length!==1)return;
@@ -791,6 +1000,7 @@ if(mapContainer?.addEventListener && map.mouseEventToLatLng){
 map.on('moveend zoomend',()=>{if(window._vecTimer)clearTimeout(window._vecTimer);window._vecTimer=setTimeout(renderVectors,220);});
 
 $('sim').onclick=async()=>{
+  stopGpsTracking();
   simOn=!simOn;$('sim').textContent=simOn?'Stopp demo':'Start demo-sim';
   if(!simOn){clearInterval(simTimer);return;}
   if(marks.length){
@@ -810,8 +1020,10 @@ $('sim').onclick=async()=>{
 };
 $('start').onclick=()=>{
   simOn=false;clearInterval(simTimer);
+  stopGpsTracking();
+  $('sim').textContent='Start demo-sim';
   $('start').textContent='GPS på';
-  navigator.geolocation.watchPosition(p=>{
+  gpsWatchId=navigator.geolocation.watchPosition(p=>{
     const nw=nearestWater(p.coords.latitude,p.coords.longitude);
     pos={lat:nw.lat,lon:nw.lon,sog:p.coords.speed||0,cog:p.coords.heading||pos?.cog||180};
     map.setView([pos.lat,pos.lon],map.getZoom());
@@ -836,6 +1048,15 @@ $('clear').onclick=()=>{if(confirm('Tøm?')){marks=[];active=0;line={pin:null,bo
 $('useHere').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');marks.push({name:`Merke ${marks.length+1}`,lat:pos.lat,lon:pos.lon,type:'merke'});resetBoatNav();save();render();update();};
 $('setPin').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');line.pin={lat:pos.lat,lon:pos.lon};save();render();};
 $('setBoat').onclick=()=>{if(!pos)return alert('Start GPS eller demo først');line.boat={lat:pos.lat,lon:pos.lon};save();render();};
+if($('polarMode')){
+  $('polarMode').value=currentPolarMode();
+  $('polarMode').onchange=()=>{
+    localStorage.regattaPolarMode=currentPolarMode();
+    save();
+    renderRecommended();
+    if(pos&&weather)update();
+  };
+}
 
 load();
 warmRouteApi();

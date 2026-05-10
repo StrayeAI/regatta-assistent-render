@@ -194,13 +194,18 @@ table td, table th {
   font-size: .85rem;
 }
 
-.inputs input {
+.inputs input,
+.inputs select {
   width: 78px;
   padding: .3rem;
   border-radius: .375rem;
   border: 1px solid #475569;
   background: #0f172a;
   color: #e2e8f0;
+}
+
+.inputs select {
+  width: 136px;
 }
 
 /* Piler inne i kart – IKKER flyttes med kartet nå */
